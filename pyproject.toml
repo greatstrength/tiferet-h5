@@ -23,3 +23,6 @@ test = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["tiferet_h5*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tiferet_h5"]
