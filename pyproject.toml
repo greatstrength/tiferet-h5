@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tiferet-h5"
-version = "0.1.0a1"
+dynamic = ["version"]
 description = "HDF5 infrastructure extension for the Tiferet framework via PyTables"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,9 @@ test = [
     "pytest>=7.0",
     "pytest-cov",
 ]
+
+[tool.setuptools.dynamic]
+version = {attr = "tiferet_h5.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
