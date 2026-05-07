@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tiferet-h5"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "HDF5 infrastructure extension for the Tiferet framework via PyTables"
 readme = "README.md"
 requires-python = ">=3.10"
