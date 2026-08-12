@@ -5,10 +5,10 @@
 **tiferet-h5** is an HDF5 infrastructure extension package for the [Tiferet](https://github.com/greatstrength/tiferet) framework.  It provides a full Domain-Driven Design (DDD) layer over PyTables, enabling structured, aliased, and repository-backed access to HDF5 files within Tiferet applications.
 
 - **Repository:** https://github.com/greatstrength/tiferet-h5
-- **Branch:** `v0.x-proto`
+- **Branch:** `v1.x-proto`
 - **Python:** ≥ 3.10
-- **Version:** `0.1.0`
-- **Dependencies:** `tiferet >= 2.0.0b1`, `tables >= 3.10.0`
+- **Version:** `1.0.0a1`
+- **Dependencies:** `tiferet == 2.0.0b16`, `tables >= 3.10.0`
 
 ## Architecture
 
@@ -16,11 +16,10 @@
 
 ```
 tiferet_h5/
-├── assets/         Error code string constants
 ├── domain/         DomainObject subclasses (H5Column, H5TableSchema, H5Node)
 ├── interfaces/     H5Service abstract contract (extends FileService)
 ├── mappers/        TableObject + NodeObject base classes
-├── utils/          H5Client concrete utility (alias: H5)
+├── utils/          H5Client concrete utility (alias: H5); also hosts its own error code constants
 └── repos/          H5Repository generic base
 ```
 
@@ -52,7 +51,7 @@ HDF5 has two fundamentally different storage primitives, each served by its own 
 - Extends `FileLoader` and implements `H5Service`.
 - Overrides `open_file()` / `close_file()` to use `tables.open_file()` instead of Python's `open()`.
 - Valid modes: `'r'`, `'r+'`, `'w'` (truncates!), `'w-'`, `'a'` (default — never truncates).
-- All operations guard against `h5file is None` and raise `TiferetError` via `RaiseError.execute()`.
+- All operations guard against `h5file is None` and raise `ServiceError` (`tiferet.interfaces`) via `ServiceError.raise_for()` — never `TiferetError`. Error code constants live beside the raise sites in `utils/h5.py`, not in a separate assets module.
 - `get_node_attrs()` uses `_v_attrnamesuser` to exclude PyTables system attributes.
 
 **`H5Repository`** (`repos/h5.py`)
@@ -172,29 +171,28 @@ class MyRepository(H5Repository):
 
 ## Error Handling
 
-All errors are raised as `TiferetError` via `RaiseError.execute()` from `tiferet.events`.
-Error code constants are defined in `tiferet_h5/assets/constants.py`.
+All errors are raised as `ServiceError` (`tiferet.interfaces`) via `ServiceError.raise_for()` — never `TiferetError`. Error code constants are hosted beside their raise sites in `tiferet_h5/utils/h5.py` (there is no `assets/` layer).
 
 | Constant | When raised |
 |---|---|
-| `H5_FILE_NOT_FOUND_ID` | File absent on read, or parent dir absent on write/append. |
+| `H5_FILE_NOT_FOUND_ID` | File absent on read, parent dir absent on write/append, or a low-level open failure. |
 | `H5_INVALID_FILE_ID` | Missing `.h5` / `.hdf5` extension in read mode. |
 | `H5_INVALID_MODE_ID` | Mode not in `{'r', 'r+', 'w', 'w-', 'a'}`. |
 | `H5_FILE_ALREADY_OPEN_ID` | `open_file()` called on an already-open client. |
 | `H5_CONN_NOT_INITIALIZED_ID` | Operation attempted without an open file handle. |
 | `H5_NODE_NOT_FOUND_ID` | Requested HDF5 path does not exist. |
+| `H5_GROUP_CREATE_FAILED_ID` | `create_group()` (or an intermediate parent group) raised a PyTables exception. |
 | `H5_TABLE_CREATE_FAILED_ID` | `create_table()` raised a PyTables exception. |
 | `H5_QUERY_FAILED_ID` | `read_rows()` / `query()` raised a PyTables exception. |
 | `H5_WRITE_FAILED_ID` | `append_rows()`, `remove_rows()`, or `create_array()` failed. |
-| `H5_SCHEMA_MISMATCH_ID` | Reserved for `TableObject.verify_schema()` consumers. |
 
 Import pattern inside the package:
 
 ```python
-from tiferet.events import RaiseError
-from ..assets import constants as const
+from tiferet.interfaces import ServiceError
+from .h5 import H5_NODE_NOT_FOUND_ID
 
-RaiseError.execute(error_code=const.H5_NODE_NOT_FOUND_ID, path=path)
+ServiceError.raise_for(self, H5_NODE_NOT_FOUND_ID, f'Node not found at path: {path}.', path=path)
 ```
 
 ## Package Exports
@@ -221,18 +219,17 @@ H5Repository
 ## Key Files for Orientation
 
 - `tiferet_h5/__init__.py` — Version and public exports
-- `tiferet_h5/assets/constants.py` — H5 error code constants
 - `tiferet_h5/domain/h5.py` — Domain objects
 - `tiferet_h5/interfaces/h5.py` — `H5Service` abstract contract
 - `tiferet_h5/mappers/settings.py` — `TableObject` and `NodeObject` base classes
-- `tiferet_h5/utils/h5.py` — `H5Client` concrete utility
+- `tiferet_h5/utils/h5.py` — `H5Client` concrete utility and its H5 error code constants
 - `tiferet_h5/repos/h5.py` — `H5Repository` generic base
 
 ## Contributing
 
-1. Work from the `v0.x-proto` branch.  Feature branches should be named `<issue-number>-<lowercase-hyphenated-title>`.
+1. Work from the `v1.x-proto` branch.  Feature branches should be named `<issue-number>-<lowercase-hyphenated-title>`.
 2. Follow the structured code style documented above.  No private methods.
-3. All errors must use `RaiseError.execute()` with a constant from `assets/constants.py`.
+3. All errors must use `ServiceError.raise_for()` with a constant hosted beside its raise site (e.g. `utils/h5.py`).
 4. Separate functional changes from documentation in distinct commits.
 5. Include `Co-Authored-By: Oz <oz-agent@warp.dev>` in every commit made with AI assistance.
 6. Publish a Collaboration Report on the issue upon completion.

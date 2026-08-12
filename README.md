@@ -7,7 +7,7 @@ HDF5 infrastructure extension for the [Tiferet](https://github.com/greatstrength
 ## Requirements
 
 - Python ≥ 3.10
-- `tiferet >= 2.0.0b1`
+- `tiferet == 2.0.0b16`
 - `tables >= 3.10.0` (PyTables)
 
 ## Installation
@@ -166,8 +166,6 @@ repo = FeatureCatalogRepository('catalog.h5')
 ```
 tiferet_h5/
 ├── __init__.py          Public exports and aliases
-├── assets/
-│   └── constants.py     H5 error code string constants
 ├── domain/
 │   └── h5.py            H5Column, H5TableSchema, H5Node
 ├── interfaces/
@@ -175,7 +173,7 @@ tiferet_h5/
 ├── mappers/
 │   └── settings.py      TableObject, NodeObject base classes
 ├── utils/
-│   └── h5.py            H5Client (alias: H5)
+│   └── h5.py            H5Client (alias: H5); also hosts H5 error code string constants
 └── repos/
     └── h5.py            H5Repository base
 ```
