@@ -13,10 +13,10 @@ import tables
 from pydantic import Field
 
 # ** app
-from tiferet import TiferetError
+from tiferet.interfaces import ServiceError
 
-from ...assets import constants as const
 from ...mappers.settings import TableObject
+from .. import h5 as const
 from ..h5 import H5Client
 
 # *** constants
@@ -99,7 +99,7 @@ def test_verify_mode_invalid(h5_path: Path) -> None:
     Test that verify_mode() raises H5_INVALID_MODE for an unrecognised mode.
     '''
     client = H5Client(h5_path, mode='x')
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.verify_mode()
 
     assert exc_info.value.error_code == const.H5_INVALID_MODE_ID
@@ -111,7 +111,7 @@ def test_verify_file_read_not_found(tmp_path: Path) -> None:
     Test that verify_file() raises H5_FILE_NOT_FOUND when the file is absent in read mode.
     '''
     missing = tmp_path / 'missing.h5'
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(missing, mode='r')
 
     assert exc_info.value.error_code == const.H5_FILE_NOT_FOUND_ID
@@ -124,7 +124,7 @@ def test_verify_file_read_wrong_extension(tmp_path: Path) -> None:
     '''
     bad_ext = tmp_path / 'data.yaml'
     bad_ext.touch()
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(bad_ext, mode='r')
 
     assert exc_info.value.error_code == const.H5_INVALID_FILE_ID
@@ -136,7 +136,7 @@ def test_verify_file_write_parent_missing(tmp_path: Path) -> None:
     Test that verify_file() raises H5_FILE_NOT_FOUND when the parent dir is absent.
     '''
     nested = tmp_path / 'nonexistent_dir' / 'data.h5'
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(nested, mode='w')
 
     assert exc_info.value.error_code == const.H5_FILE_NOT_FOUND_ID
@@ -186,7 +186,7 @@ def test_open_file_already_open(h5_path: Path) -> None:
     '''
     client = H5Client(h5_path, mode='a')
     client.open_file()
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.open_file()
 
     assert exc_info.value.error_code == const.H5_FILE_ALREADY_OPEN_ID
@@ -199,7 +199,7 @@ def test_operation_before_open_raises(h5_path: Path) -> None:
     Test that calling node_exists() before open_file() raises H5_CONN_NOT_INITIALIZED.
     '''
     client = H5Client(h5_path, mode='a')
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.node_exists('/')
 
     assert exc_info.value.error_code == const.H5_CONN_NOT_INITIALIZED_ID
@@ -259,7 +259,7 @@ def test_get_group_not_found(existing_h5: Path) -> None:
     Test that get_group() raises H5_NODE_NOT_FOUND for a missing path.
     '''
     with H5Client(existing_h5, mode='r') as h5:
-        with pytest.raises(TiferetError) as exc_info:
+        with pytest.raises(ServiceError) as exc_info:
             h5.get_group('/does_not_exist')
 
     assert exc_info.value.error_code == const.H5_NODE_NOT_FOUND_ID
@@ -449,7 +449,7 @@ def test_get_node_attr_not_found(existing_h5: Path) -> None:
     Test that get_group() raises H5_NODE_NOT_FOUND for a missing node.
     '''
     with H5Client(existing_h5, mode='r') as h5:
-        with pytest.raises(TiferetError) as exc_info:
+        with pytest.raises(ServiceError) as exc_info:
             h5.get_node_attrs('/missing')
 
     assert exc_info.value.error_code == const.H5_NODE_NOT_FOUND_ID
@@ -463,3 +463,62 @@ def test_flush_does_not_close(h5_path: Path) -> None:
     with H5Client(h5_path, mode='w') as h5:
         h5.flush()
         assert h5.h5file is not None
+
+
+# ** test: create_group_duplicate_raises
+def test_create_group_duplicate_raises(h5_path: Path) -> None:
+    '''
+    Test that creating a group that already exists raises H5_GROUP_CREATE_FAILED
+    with the underlying PyTables NodeError chained as the cause.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_group('/features')
+        with pytest.raises(ServiceError) as exc_info:
+            h5.create_group('/features')
+
+    assert exc_info.value.error_code == const.H5_GROUP_CREATE_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, tables.NodeError)
+
+
+# ** test: create_table_failure_preserves_cause
+def test_create_table_failure_preserves_cause(h5_path: Path) -> None:
+    '''
+    Test that a table creation failure raises H5_TABLE_CREATE_FAILED with the
+    original PyTables exception preserved as the ServiceError's cause.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SampleTableObject.get_description())
+        with pytest.raises(ServiceError) as exc_info:
+            h5.create_table('/items', SampleTableObject.get_description())
+
+    assert exc_info.value.error_code == const.H5_TABLE_CREATE_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, tables.NodeError)
+
+
+# ** test: read_rows_invalid_condition_raises_query_failed
+def test_read_rows_invalid_condition_raises_query_failed(h5_with_table: Path) -> None:
+    '''
+    Test that an unparseable condition string raises H5_QUERY_FAILED rather
+    than leaking a raw SyntaxError, with the SyntaxError chained as the cause.
+    '''
+    with H5Client(h5_with_table, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.read_rows('/items', condition='value >>> 1')
+
+    assert exc_info.value.error_code == const.H5_QUERY_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, SyntaxError)
+
+
+# ** test: append_rows_unknown_column_raises_write_failed
+def test_append_rows_unknown_column_raises_write_failed(h5_path: Path) -> None:
+    '''
+    Test that appending a row with an unknown column name raises H5_WRITE_FAILED
+    rather than leaking a raw KeyError, with the KeyError chained as the cause.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SampleTableObject.get_description())
+        with pytest.raises(ServiceError) as exc_info:
+            h5.append_rows('/items', [{'not_a_column': 'x'}])
+
+    assert exc_info.value.error_code == const.H5_WRITE_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, KeyError)

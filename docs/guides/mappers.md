@@ -72,6 +72,8 @@ desc = StepTableObject.get_description()
 table = h5file.create_table('/steps', desc, title='Steps')
 ```
 
+Raises a plain `ValueError` if neither `_H5_TYPES` nor `_DESCRIPTION` is set. This is deliberately **not** a `ServiceError`: it is a class-authoring-time mistake caught the first time a mapper subclass is used, not a runtime infrastructure failure, so it does not belong to `H5Client`'s `ServiceError` contract (see [docs/guides/utils/h5.md](utils/h5.md#error-handling)).
+
 #### `to_row(table: tables.Table) -> None`
 
 Append this object as a new row to an open PyTables `Table`.  Encodes string values to bytes for `StringCol` columns; replaces `None` with type-appropriate defaults.  Does **not** flush — call `table.flush()` when the write sequence is complete.

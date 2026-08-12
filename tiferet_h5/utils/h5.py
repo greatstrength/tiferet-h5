@@ -11,10 +11,57 @@ import tables
 
 # ** app
 from tiferet.utils import FileLoader
-from tiferet.events import RaiseError
+from tiferet.interfaces import ServiceError
 
-from ..assets import constants as const
 from ..interfaces import H5Service
+
+# *** constants (ids)
+
+# ** constant: h5_file_not_found_id
+H5_FILE_NOT_FOUND_ID = 'H5_FILE_NOT_FOUND'
+
+# ** constant: h5_invalid_file_id
+H5_INVALID_FILE_ID = 'H5_INVALID_FILE'
+
+# ** constant: h5_invalid_mode_id
+H5_INVALID_MODE_ID = 'H5_INVALID_MODE'
+
+# ** constant: h5_file_already_open_id
+H5_FILE_ALREADY_OPEN_ID = 'H5_FILE_ALREADY_OPEN'
+
+# ** constant: h5_conn_not_initialized_id
+H5_CONN_NOT_INITIALIZED_ID = 'H5_CONN_NOT_INITIALIZED'
+
+# ** constant: h5_node_not_found_id
+H5_NODE_NOT_FOUND_ID = 'H5_NODE_NOT_FOUND'
+
+# ** constant: h5_group_create_failed_id
+H5_GROUP_CREATE_FAILED_ID = 'H5_GROUP_CREATE_FAILED'
+
+# ** constant: h5_table_create_failed_id
+H5_TABLE_CREATE_FAILED_ID = 'H5_TABLE_CREATE_FAILED'
+
+# ** constant: h5_query_failed_id
+H5_QUERY_FAILED_ID = 'H5_QUERY_FAILED'
+
+# ** constant: h5_write_failed_id
+H5_WRITE_FAILED_ID = 'H5_WRITE_FAILED'
+
+# *** constants (messages)
+
+# ** constant: h5_conn_not_initialized_message
+H5_CONN_NOT_INITIALIZED_MESSAGE = (
+    'HDF5 connection not initialized. Must be used within a "with" block.'
+)
+
+# ** constant: valid_h5_modes
+VALID_H5_MODES = (
+    'r',
+    'r+',
+    'w',
+    'w-',
+    'a',
+)
 
 # *** utils
 
@@ -69,16 +116,16 @@ class H5Client(FileLoader, H5Service):
         '''
         Validate the HDF5 open mode string.
 
-        :raises TiferetError: If the mode is not a valid PyTables mode.
+        :raises ServiceError: If the mode is not a valid PyTables mode.
         '''
 
-        # Define the set of valid PyTables open modes.
-        valid_modes = {'r', 'r+', 'w', 'w-', 'a'}
-
         # Raise a structured error if the mode is not valid.
-        if self.mode not in valid_modes:
-            RaiseError.execute(
-                error_code=const.H5_INVALID_MODE_ID,
+        if self.mode not in VALID_H5_MODES:
+            ServiceError.raise_for(
+                self,
+                H5_INVALID_MODE_ID,
+                f'Invalid H5 mode: {self.mode}. '
+                f'Supported modes: {", ".join(VALID_H5_MODES)}.',
                 mode=self.mode,
             )
 
@@ -96,27 +143,33 @@ class H5Client(FileLoader, H5Service):
         :type path: Path
         :param mode: The PyTables open mode.
         :type mode: str
-        :raises TiferetError: If validation fails.
+        :raises ServiceError: If validation fails.
         '''
 
         # For read modes verify extension and file existence.
         if mode in ('r', 'r+'):
             if path.suffix.lower() not in {'.h5', '.hdf5'}:
-                RaiseError.execute(
-                    error_code=const.H5_INVALID_FILE_ID,
+                ServiceError.raise_for(
+                    H5Client,
+                    H5_INVALID_FILE_ID,
+                    f'Invalid HDF5 file extension: {path}. Expected .h5 or .hdf5.',
                     path=str(path),
                 )
             if not path.exists():
-                RaiseError.execute(
-                    error_code=const.H5_FILE_NOT_FOUND_ID,
+                ServiceError.raise_for(
+                    H5Client,
+                    H5_FILE_NOT_FOUND_ID,
+                    f'File not found: {path}.',
                     path=str(path),
                 )
 
         # For write / append modes verify the parent directory exists.
         else:
             if not path.parent.exists():
-                RaiseError.execute(
-                    error_code=const.H5_FILE_NOT_FOUND_ID,
+                ServiceError.raise_for(
+                    H5Client,
+                    H5_FILE_NOT_FOUND_ID,
+                    f'Parent directory not found for: {path}.',
                     path=str(path),
                 )
 
@@ -127,14 +180,16 @@ class H5Client(FileLoader, H5Service):
 
         :return: This ``H5Client`` instance (for use as a context manager).
         :rtype: H5Client
-        :raises TiferetError: If the file is already open, the path or mode
+        :raises ServiceError: If the file is already open, the path or mode
             is invalid, or PyTables raises an exception.
         '''
 
         # Raise an error if the file handle is already open.
         if self.h5file is not None:
-            RaiseError.execute(
-                error_code=const.H5_FILE_ALREADY_OPEN_ID,
+            ServiceError.raise_for(
+                self,
+                H5_FILE_ALREADY_OPEN_ID,
+                f'H5 file is already open: {self.path}.',
                 path=str(self.path),
             )
 
@@ -152,10 +207,13 @@ class H5Client(FileLoader, H5Service):
         except tables.HDF5ExtError as e:
 
             # Wrap PyTables open failures as structured errors.
-            RaiseError.execute(
-                error_code=const.H5_FILE_NOT_FOUND_ID,
-                path=str(self.path),
+            ServiceError.raise_for(
+                self,
+                H5_FILE_NOT_FOUND_ID,
+                f'Failed to open HDF5 file at {self.path}: {e}.',
+                cause=e,
                 original_error=str(e),
+                path=str(self.path),
             )
 
         # Return self so the context manager pattern works.
@@ -178,12 +236,12 @@ class H5Client(FileLoader, H5Service):
         '''
         Flush all pending write buffers to disk without closing the file.
 
-        :raises TiferetError: If the file is not open.
+        :raises ServiceError: If the file is not open.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         # Flush the open file handle.
         self.h5file.flush()
@@ -227,15 +285,58 @@ class H5Client(FileLoader, H5Service):
         :type path: str
         :return: True if the node exists, otherwise False.
         :rtype: bool
-        :raises TiferetError: If the file is not open.
+        :raises ServiceError: If the file is not open.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         # Delegate to PyTables node existence check.
         return self.h5file.__contains__(path)
+
+    # * method: _ensure_parent_groups
+    def _ensure_parent_groups(self, parent_path: str) -> None:
+        '''
+        Ensure every intermediate group node down to ``parent_path`` exists,
+        creating any that are missing one path segment at a time.
+
+        ``tables.File.create_group`` requires ``name`` to be a single path
+        segment even when ``createparents=True`` (that flag only covers
+        parents of ``where``), so a multi-segment ``parent_path`` cannot be
+        created in one call. This walks the path from the root, creating each
+        missing segment individually.
+
+        :param parent_path: Absolute HDF5 path whose group chain must exist.
+        :type parent_path: str
+        :raises ServiceError: If a PyTables error occurs while creating a
+            missing intermediate group.
+        '''
+
+        # Walk each non-empty path segment from the root.
+        current = ''
+        for segment in parent_path.split('/'):
+            if not segment:
+                continue
+            parent = current or '/'
+            current = f'{current}/{segment}'
+
+            # Create this segment's group if it does not already exist.
+            if not self.node_exists(current):
+                try:
+                    self.h5file.create_group(parent, segment)
+
+                except (tables.NodeError, tables.HDF5ExtError) as e:
+
+                    # Wrap intermediate group creation failures as structured errors.
+                    ServiceError.raise_for(
+                        self,
+                        H5_GROUP_CREATE_FAILED_ID,
+                        f'Failed to create intermediate group at {current}: {e}.',
+                        cause=e,
+                        original_error=str(e),
+                        path=current,
+                    )
 
     # * method: create_group
     def create_group(self,
@@ -254,12 +355,12 @@ class H5Client(FileLoader, H5Service):
         :type create_parents: bool
         :return: The created PyTables group object.
         :rtype: Any
-        :raises TiferetError: If the file is not open.
+        :raises ServiceError: If the file is not open or group creation fails.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         # Split the path into parent and group name.
         parent_path, group_name = path.rsplit('/', 1)
@@ -267,10 +368,24 @@ class H5Client(FileLoader, H5Service):
 
         # Create intermediate parents if requested and absent.
         if create_parents and not self.node_exists(parent_path):
-            self.h5file.create_group('/', parent_path.lstrip('/'), createparents=True)
+            self._ensure_parent_groups(parent_path)
 
-        # Create and return the group.
-        return self.h5file.create_group(parent_path, group_name, title=title)
+        try:
+
+            # Create and return the group.
+            return self.h5file.create_group(parent_path, group_name, title=title)
+
+        except (tables.NodeError, tables.HDF5ExtError) as e:
+
+            # Wrap group creation failures as structured errors.
+            ServiceError.raise_for(
+                self,
+                H5_GROUP_CREATE_FAILED_ID,
+                f'Failed to create group at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+            )
 
     # * method: get_group
     def get_group(self, path: str) -> Any:
@@ -281,23 +396,26 @@ class H5Client(FileLoader, H5Service):
         :type path: str
         :return: The PyTables group object.
         :rtype: Any
-        :raises TiferetError: If the file is not open or the node is absent.
+        :raises ServiceError: If the file is not open or the node is absent.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
             # Retrieve and return the group node.
             return self.h5file.get_node(path)
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
             # Raise a structured error for missing nodes.
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
 
@@ -321,22 +439,24 @@ class H5Client(FileLoader, H5Service):
         :type kwargs: dict
         :return: The created PyTables table object.
         :rtype: Any
-        :raises TiferetError: If the file is not open or table creation fails.
+        :raises ServiceError: If the file is not open or table creation fails.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         # Split path into parent group path and table name.
         parent_path, table_name = path.rsplit('/', 1)
         parent_path = parent_path or '/'
 
-        try:
+        # Resolve the parent group, creating it if absent. Left outside the
+        # try block below so its own ServiceError (via _ensure_parent_groups)
+        # propagates with its own error code instead of being re-wrapped.
+        if not self.node_exists(parent_path):
+            self._ensure_parent_groups(parent_path)
 
-            # Resolve the parent group, creating it if absent.
-            if not self.node_exists(parent_path):
-                self.h5file.create_group('/', parent_path.lstrip('/'), createparents=True)
+        try:
 
             parent = self.h5file.get_node(parent_path)
 
@@ -349,13 +469,16 @@ class H5Client(FileLoader, H5Service):
                 **kwargs,
             )
 
-        except Exception as e:
+        except (tables.NodeError, tables.HDF5ExtError) as e:
 
-            # Wrap any failure as a structured error.
-            RaiseError.execute(
-                error_code=const.H5_TABLE_CREATE_FAILED_ID,
-                path=path,
+            # Wrap table creation failures as structured errors.
+            ServiceError.raise_for(
+                self,
+                H5_TABLE_CREATE_FAILED_ID,
+                f'Failed to create table at {path}: {e}.',
+                cause=e,
                 original_error=str(e),
+                path=path,
             )
 
     # * method: get_table
@@ -367,23 +490,26 @@ class H5Client(FileLoader, H5Service):
         :type path: str
         :return: The PyTables table object.
         :rtype: Any
-        :raises TiferetError: If the file is not open or the node is absent.
+        :raises ServiceError: If the file is not open or the node is absent.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
             # Retrieve and return the table node.
             return self.h5file.get_node(path)
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
             # Raise a structured error for missing nodes.
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
 
@@ -431,12 +557,12 @@ class H5Client(FileLoader, H5Service):
         :type path: str
         :param rows: List of dicts mapping column names to values.
         :type rows: List[Dict[str, Any]]
-        :raises TiferetError: If the file is not open or a write error occurs.
+        :raises ServiceError: If the file is not open or a write error occurs.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
@@ -455,19 +581,25 @@ class H5Client(FileLoader, H5Service):
             # Flush the buffer to disk.
             table.flush()
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
 
-        except Exception as e:
+        except (KeyError, ValueError, tables.HDF5ExtError) as e:
 
-            RaiseError.execute(
-                error_code=const.H5_WRITE_FAILED_ID,
-                path=path,
+            ServiceError.raise_for(
+                self,
+                H5_WRITE_FAILED_ID,
+                f'Failed to append rows to table at {path}: {e}.',
+                cause=e,
                 original_error=str(e),
+                path=path,
             )
 
     # * method: read_rows
@@ -493,13 +625,13 @@ class H5Client(FileLoader, H5Service):
         :type condition: Optional[str]
         :return: List of dicts with Python-native values.
         :rtype: List[Dict[str, Any]]
-        :raises TiferetError: If the file is not open, the node is absent,
+        :raises ServiceError: If the file is not open, the node is absent,
             or a query error occurs.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
@@ -528,19 +660,25 @@ class H5Client(FileLoader, H5Service):
             # Return the list of normalized dicts.
             return result
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
 
-        except Exception as e:
+        except (SyntaxError, NameError, tables.HDF5ExtError) as e:
 
-            RaiseError.execute(
-                error_code=const.H5_QUERY_FAILED_ID,
-                path=path,
+            ServiceError.raise_for(
+                self,
+                H5_QUERY_FAILED_ID,
+                f'Failed to query table at {path}: {e}.',
+                cause=e,
                 original_error=str(e),
+                path=path,
             )
 
     # * method: query
@@ -560,7 +698,7 @@ class H5Client(FileLoader, H5Service):
         :type kwargs: dict
         :return: Matching rows as a list of dicts with Python-native values.
         :rtype: List[Dict[str, Any]]
-        :raises TiferetError: If the file is not open, the node is absent,
+        :raises ServiceError: If the file is not open, the node is absent,
             or the condition string is invalid.
         '''
 
@@ -581,12 +719,12 @@ class H5Client(FileLoader, H5Service):
         :type condition: str
         :return: The number of rows removed.
         :rtype: int
-        :raises TiferetError: If the file is not open or the node is absent.
+        :raises ServiceError: If the file is not open or the node is absent.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
@@ -606,19 +744,25 @@ class H5Client(FileLoader, H5Service):
             # Return the count of removed rows.
             return len(indices)
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
 
-        except Exception as e:
+        except (SyntaxError, NameError, IndexError, tables.HDF5ExtError) as e:
 
-            RaiseError.execute(
-                error_code=const.H5_WRITE_FAILED_ID,
-                path=path,
+            ServiceError.raise_for(
+                self,
+                H5_WRITE_FAILED_ID,
+                f'Failed to remove rows from table at {path}: {e}.',
+                cause=e,
                 original_error=str(e),
+                path=path,
             )
 
     # * method: create_array
@@ -638,12 +782,12 @@ class H5Client(FileLoader, H5Service):
         :type title: str
         :return: The created PyTables array object.
         :rtype: Any
-        :raises TiferetError: If the file is not open or creation fails.
+        :raises ServiceError: If the file is not open or creation fails.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         # Split path into parent group path and array name.
         parent_path, array_name = path.rsplit('/', 1)
@@ -657,19 +801,25 @@ class H5Client(FileLoader, H5Service):
             # Create and return the array node.
             return self.h5file.create_array(parent, array_name, data, title=title)
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {parent_path}.',
+                cause=e,
                 path=parent_path,
             )
 
-        except Exception as e:
+        except (tables.NodeError, ValueError, tables.HDF5ExtError) as e:
 
-            RaiseError.execute(
-                error_code=const.H5_WRITE_FAILED_ID,
-                path=path,
+            ServiceError.raise_for(
+                self,
+                H5_WRITE_FAILED_ID,
+                f'Failed to create array at {path}: {e}.',
+                cause=e,
                 original_error=str(e),
+                path=path,
             )
 
     # * method: get_array
@@ -681,22 +831,25 @@ class H5Client(FileLoader, H5Service):
         :type path: str
         :return: The PyTables array object.
         :rtype: Any
-        :raises TiferetError: If the file is not open or the node is absent.
+        :raises ServiceError: If the file is not open or the node is absent.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
             # Retrieve and return the array node.
             return self.h5file.get_node(path)
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
 
@@ -711,12 +864,12 @@ class H5Client(FileLoader, H5Service):
         :type name: str
         :param value: Attribute value.
         :type value: Any
-        :raises TiferetError: If the file is not open or the node is absent.
+        :raises ServiceError: If the file is not open or the node is absent.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
@@ -724,10 +877,13 @@ class H5Client(FileLoader, H5Service):
             node = self.h5file.get_node(path)
             node._v_attrs[name] = value
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
 
@@ -742,12 +898,12 @@ class H5Client(FileLoader, H5Service):
         :type name: str
         :return: The attribute value.
         :rtype: Any
-        :raises TiferetError: If the file is not open or the node is absent.
+        :raises ServiceError: If the file is not open or the node is absent.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
@@ -762,10 +918,13 @@ class H5Client(FileLoader, H5Service):
                 return val.item()
             return val
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
 
@@ -782,12 +941,12 @@ class H5Client(FileLoader, H5Service):
         :type path: str
         :return: All node attributes as a plain Python dict.
         :rtype: Dict[str, Any]
-        :raises TiferetError: If the file is not open or the node is absent.
+        :raises ServiceError: If the file is not open or the node is absent.
         '''
 
         # Guard against an uninitialised file handle.
         if self.h5file is None:
-            RaiseError.execute(error_code=const.H5_CONN_NOT_INITIALIZED_ID)
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
 
         try:
 
@@ -810,9 +969,12 @@ class H5Client(FileLoader, H5Service):
             # Return the normalized attribute dict.
             return result
 
-        except tables.NoSuchNodeError:
+        except tables.NoSuchNodeError as e:
 
-            RaiseError.execute(
-                error_code=const.H5_NODE_NOT_FOUND_ID,
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
                 path=path,
             )
