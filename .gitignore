@@ -208,3 +208,6 @@ __marimo__/
 
 # Session handoff notes (local scratch, not part of the published project)
 .handoff/
+
+# RFP drafts (local scratch; published to GitHub issues, not committed to the repo)
+.rfp/
