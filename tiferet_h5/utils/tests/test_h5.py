@@ -522,3 +522,91 @@ def test_append_rows_unknown_column_raises_write_failed(h5_path: Path) -> None:
 
     assert exc_info.value.error_code == const.H5_WRITE_FAILED_ID
     assert isinstance(exc_info.value.__cause__, KeyError)
+
+# ** test: create_table_auto_creates_parents
+def test_create_table_auto_creates_parents(h5_path: Path) -> None:
+    '''
+    Test that create_table() (via get_or_create_table()) auto-creates missing
+    multi-level intermediate parent groups rather than failing, closing the
+    gap in backlog issue #18's original AC #4 test coverage (the functional
+    fix already ships via _ensure_parent_groups(); only this test was missing).
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        t = h5.get_or_create_table('/a/b/c', SampleTableObject.get_description())
+
+        assert t is not None
+        assert h5.node_exists('/a') is True
+        assert h5.node_exists('/a/b') is True
+        assert h5.node_exists('/a/b/c') is True
+
+# ** test: assert_schema_pass
+def test_assert_schema_pass(h5_with_table: Path) -> None:
+    '''
+    Test that assert_schema() does not raise when the table's live columns
+    match the table_cls's declared _H5_TYPES.
+    '''
+    with H5Client(h5_with_table, mode='r') as h5:
+        h5.assert_schema('/items', SampleTableObject)  # must not raise
+
+# ** test: assert_schema_column_mismatch_raises
+def test_assert_schema_column_mismatch_raises(h5_with_table: Path) -> None:
+    '''
+    Test that assert_schema() raises H5_SCHEMA_MISMATCH when the table_cls's
+    declared columns no longer match the live table, with the mismatch
+    descriptions attached to the raised ServiceError.
+    '''
+    class DriftedTableObject(TableObject):
+        name: str = Field(default='')
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(128),
+        }
+
+    with H5Client(h5_with_table, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.assert_schema('/items', DriftedTableObject)
+
+    assert exc_info.value.error_code == const.H5_SCHEMA_MISMATCH_ID
+    assert any('value' in m for m in exc_info.value.kwargs['mismatches'])
+
+# ** test: assert_schema_version_mismatch_raises
+def test_assert_schema_version_mismatch_raises(h5_path: Path) -> None:
+    '''
+    Test that assert_schema() raises H5_SCHEMA_MISMATCH on a stale stored
+    schema_version attribute even when the live columns still match.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SampleTableObject.get_description())
+        h5.set_node_attr('/items', 'schema_version', 'stale-fingerprint')
+
+    with H5Client(h5_path, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.assert_schema('/items', SampleTableObject)
+
+    assert exc_info.value.error_code == const.H5_SCHEMA_MISMATCH_ID
+    assert any('version' in m for m in exc_info.value.kwargs['mismatches'])
+
+# ** test: assert_schema_version_match_passes
+def test_assert_schema_version_match_passes(h5_path: Path) -> None:
+    '''
+    Test that assert_schema() does not raise when the stored schema_version
+    attribute matches the table_cls's current fingerprint.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SampleTableObject.get_description())
+        h5.set_node_attr('/items', 'schema_version', SampleTableObject.schema_fingerprint())
+
+    with H5Client(h5_path, mode='r') as h5:
+        h5.assert_schema('/items', SampleTableObject)  # must not raise
+
+# ** test: assert_schema_check_version_false_skips_version
+def test_assert_schema_check_version_false_skips_version(h5_path: Path) -> None:
+    '''
+    Test that assert_schema(check_version=False) ignores a stale stored
+    schema_version attribute and only checks column-level drift.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SampleTableObject.get_description())
+        h5.set_node_attr('/items', 'schema_version', 'stale-fingerprint')
+
+    with H5Client(h5_path, mode='r') as h5:
+        h5.assert_schema('/items', SampleTableObject, check_version=False)  # must not raise
