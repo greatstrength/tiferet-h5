@@ -7,7 +7,7 @@ HDF5 infrastructure extension for the [Tiferet](https://github.com/greatstrength
 ## Requirements
 
 - Python ≥ 3.10
-- `tiferet == 2.0.0b16`
+- `tiferet >= 2.0.3, < 2.1`
 - `tables >= 3.10.0` (PyTables)
 
 ## Installation
