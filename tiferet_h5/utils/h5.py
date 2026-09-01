@@ -14,6 +14,7 @@ from tiferet.utils import FileLoader
 from tiferet.interfaces import ServiceError
 
 from ..interfaces import H5Service
+from ..mappers.settings import TableObject
 
 # *** constants (ids)
 
@@ -46,6 +47,9 @@ H5_QUERY_FAILED_ID = 'H5_QUERY_FAILED'
 
 # ** constant: h5_write_failed_id
 H5_WRITE_FAILED_ID = 'H5_WRITE_FAILED'
+
+# ** constant: h5_schema_mismatch_id
+H5_SCHEMA_MISMATCH_ID = 'H5_SCHEMA_MISMATCH'
 
 # *** constants (messages)
 
@@ -926,6 +930,70 @@ class H5Client(FileLoader, H5Service):
                 f'Node not found at path: {path}.',
                 cause=e,
                 path=path,
+            )
+
+    # * method: assert_schema
+    def assert_schema(self,
+            path: str,
+            table_cls: type[TableObject],
+            check_version: bool = True,
+        ) -> None:
+        '''
+        Verify the table at ``path`` matches ``table_cls``'s declared schema,
+        raising a structured error on any detected drift.
+
+        Enforcement is opt-in: this method is never called automatically by
+        ``get_table`` or ``get_or_create_table``, so existing callers are
+        unaffected unless they explicitly ask for the check. Column-level
+        drift detection is delegated to ``table_cls.verify_schema()`` (which
+        cannot raise itself -- the mapper layer never imports ``ServiceError``).
+        When ``check_version`` is True and a ``schema_version`` node attribute
+        is present on the table, it is additionally compared against
+        ``table_cls.schema_fingerprint()``.
+
+        :param path: Absolute HDF5 path for the table to verify.
+        :type path: str
+        :param table_cls: The ``TableObject`` subclass declaring the expected schema.
+        :type table_cls: type[TableObject]
+        :param check_version: Whether to additionally compare a stored
+            ``schema_version`` node attribute against the current fingerprint.
+        :type check_version: bool
+        :raises ServiceError: If the file is not open, the node is absent, or
+            a schema mismatch is detected.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
+
+        # Retrieve the target table (raises H5_NODE_NOT_FOUND if absent).
+        table = self.get_table(path)
+
+        # Collect column-level mismatches from the mapper's own detector.
+        mismatches = table_cls.verify_schema(table)
+
+        # Additionally compare the stored schema version, when present.
+        if check_version:
+            attrs = table._v_attrs
+            if 'schema_version' in attrs._v_attrnamesuser:
+                stored_version = attrs['schema_version']
+                if isinstance(stored_version, bytes):
+                    stored_version = stored_version.decode('utf-8')
+                expected_version = table_cls.schema_fingerprint()
+                if stored_version != expected_version:
+                    mismatches.append(
+                        f'Schema version mismatch at {path}: '
+                        f'stored "{stored_version}", expected "{expected_version}".'
+                    )
+
+        # Raise a structured error if any mismatches were detected.
+        if mismatches:
+            ServiceError.raise_for(
+                self,
+                H5_SCHEMA_MISMATCH_ID,
+                f'Schema mismatch at {path}: {"; ".join(mismatches)}.',
+                path=path,
+                mismatches=mismatches,
             )
 
     # * method: get_node_attrs

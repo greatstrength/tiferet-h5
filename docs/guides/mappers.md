@@ -125,14 +125,27 @@ Encode a Python value for a specific PyTables column type.  Encodes `str` → `b
 
 #### `verify_schema(table: tables.Table) -> List[str]` _(classmethod)_
 
-Compare `_H5_TYPES` against an open table's column names.  Returns a list of mismatch descriptions; an empty list means the schemas are consistent.  Useful for guarding against schema drift.
+Compare `_H5_TYPES` against an open table's live column schema.  Detects drift in both directions — columns declared in `_H5_TYPES` but missing from the table, columns present in the table but no longer declared, and type or `StringCol` width drift for columns present on both sides.  Returns a list of mismatch descriptions; an empty list means the schemas are consistent.
+
+This method never raises.  It is a pure detector: the mapper layer never imports `ServiceError` (see `tiferet-code-mappers`'s layer boundary), so pairing a mismatch with a real, structured consequence is `H5Client.assert_schema()`'s job, not `TableObject`'s.  Call `verify_schema()` directly only when you want the raw mismatch list; reach for [`H5Client.assert_schema()`](utils/h5.md#schema-integrity) when you want enforcement.
 
 ```python
 with H5Client('data.h5') as h5:
     t = h5.get_table('/steps')
     issues = StepTableObject.verify_schema(t)
     if issues:
-        raise ValueError('\n'.join(issues))
+        print('\n'.join(issues))
+```
+
+#### `schema_fingerprint() -> str` _(classmethod)_
+
+Compute a deterministic fingerprint of the declared `_H5_TYPES` schema, derived from each column's name, PyTables type identifier, and (for `StringCol`) declared byte width — sorted by column name so declaration order never affects the result.  Two mapper classes with identical `_H5_TYPES` always produce the same fingerprint; any change to a column's name, type, or string width changes it.
+
+Because the fingerprint is auto-derived from the schema itself rather than a manually-bumped integer or human-assigned string, it cannot silently drift out of sync with `_H5_TYPES`.  Stamp it as a `schema_version` node attribute on a table (see [H5Client's Schema Integrity section](utils/h5.md#schema-integrity)) so a caller can check schema compatibility without opening and introspecting the table.
+
+```python
+version = StepTableObject.schema_fingerprint()
+# '3f2a9c1e4b07' -- stable for this exact _H5_TYPES declaration
 ```
 
 ---

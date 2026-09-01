@@ -3,6 +3,7 @@
 # *** imports
 
 # ** core
+import hashlib
 from typing import Any, ClassVar, Dict, List, Optional, Type
 
 # ** infra
@@ -295,8 +296,14 @@ class TableObject(DomainObject):
         '''
         Verify that an open table's column schema matches ``_H5_TYPES``.
 
-        Returns a list of mismatch descriptions.  An empty list indicates the
-        schema is fully consistent with the declared columns.
+        Detects schema drift in both directions: columns declared in
+        ``_H5_TYPES`` that are absent from the live table, columns present in
+        the live table but no longer declared, and type or ``StringCol``
+        width drift for columns declared on both sides. Returns a list of
+        mismatch descriptions; an empty list indicates the schema is fully
+        consistent with the declared columns. This method never raises --
+        pairing it with a real consequence is ``H5Client.assert_schema()``'s
+        responsibility, since only the utils layer may import ``ServiceError``.
 
         :param table: The open PyTables ``Table`` to check against.
         :type table: tables.Table
@@ -307,16 +314,76 @@ class TableObject(DomainObject):
         # Collect mismatches between declared H5 columns and actual table cols.
         mismatches: List[str] = []
 
-        # Check for columns declared in _H5_TYPES that are absent in the table.
-        for field_name in cls._H5_TYPES:
+        # Check declared columns for absence, then type/width drift.
+        for field_name, declared_col in cls._H5_TYPES.items():
             if field_name not in table.colnames:
                 mismatches.append(
                     f'Column "{field_name}" declared in _H5_TYPES '
                     f'but not found in table at {table._v_pathname}.'
                 )
+                continue
+
+            # Compare declared and actual PyTables type identifiers.
+            actual_col = table.coldescrs[field_name]
+            if declared_col.type != actual_col.type:
+                mismatches.append(
+                    f'Column "{field_name}" type mismatch at {table._v_pathname}: '
+                    f'declared "{declared_col.type}", found "{actual_col.type}".'
+                )
+
+            # StringCol columns share the "string" type regardless of width,
+            # so a byte-width mismatch must be checked separately.
+            elif declared_col.type == 'string' and declared_col.itemsize != actual_col.itemsize:
+                mismatches.append(
+                    f'Column "{field_name}" StringCol width mismatch at '
+                    f'{table._v_pathname}: declared {declared_col.itemsize}, '
+                    f'found {actual_col.itemsize}.'
+                )
+
+        # Check for columns present in the table but no longer declared.
+        for col_name in table.colnames:
+            if col_name not in cls._H5_TYPES:
+                mismatches.append(
+                    f'Column "{col_name}" present in table at {table._v_pathname} '
+                    f'but not declared in _H5_TYPES.'
+                )
 
         # Return all collected mismatch descriptions.
         return mismatches
+
+    # * method: schema_fingerprint
+    @classmethod
+    def schema_fingerprint(cls) -> str:
+        '''
+        Compute a deterministic fingerprint of the declared ``_H5_TYPES`` schema.
+
+        The fingerprint is derived from each column's name, PyTables type
+        identifier, and (for ``StringCol``) declared byte width, sorted by
+        column name so field declaration order never affects the result. Two
+        mapper classes with identical ``_H5_TYPES`` always produce the same
+        fingerprint; any change to a column's name, type, or string width
+        changes it. Auto-deriving the marker this way -- rather than a
+        manually-bumped integer or human-assigned string -- means it can
+        never silently drift out of sync with the schema it describes.
+
+        Intended to be stamped as a ``schema_version`` node attribute on a
+        table (e.g. via ``H5Client.set_node_attr``) so schema compatibility
+        can be checked without opening and introspecting the table -- see
+        ``H5Client.assert_schema()``.
+
+        :return: A 12-character hexadecimal fingerprint string.
+        :rtype: str
+        '''
+
+        # Build a canonical, column-order-independent representation.
+        parts = sorted(
+            f'{name}:{col.type}:{getattr(col, "itemsize", "")}'
+            for name, col in cls._H5_TYPES.items()
+        )
+        canonical = '|'.join(parts)
+
+        # Hash the canonical representation and truncate for a compact marker.
+        return hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:12]
 
 
 # ** class: node_object

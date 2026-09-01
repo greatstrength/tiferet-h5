@@ -352,23 +352,128 @@ def test_verify_schema_pass(h5_table) -> None:
     assert mismatches == []
 
 
-# ** test: verify_schema_fail
-def test_verify_schema_fail(h5_table) -> None:
+# ** test: verify_schema_missing_column
+def test_verify_schema_missing_column(h5_table) -> None:
     '''
-    Test that verify_schema() reports columns declared in _H5_TYPES but absent in the table.
+    Test that verify_schema() reports a column declared in _H5_TYPES but absent in the table.
     '''
-    class ExtraColObject(TableObject):
+    class MissingColObject(TableObject):
         name: str = Field(default='')
+        score: float = Field(default=0.0)
         missing: str = Field(default='')
         _H5_TYPES: ClassVar[Dict[str, Any]] = {
             'name':    tables.StringCol(64),
+            'score':   tables.Float64Col(),
             'missing': tables.StringCol(64),
         }
 
-    mismatches = ExtraColObject.verify_schema(h5_table)
+    mismatches = MissingColObject.verify_schema(h5_table)
 
     assert len(mismatches) == 1
     assert 'missing' in mismatches[0]
+    assert 'declared in _H5_TYPES' in mismatches[0]
+
+
+# ** test: verify_schema_extra_column
+def test_verify_schema_extra_column(h5_table) -> None:
+    '''
+    Test that verify_schema() reports a column present in the table but no
+    longer declared in _H5_TYPES (schema drift in the opposite direction from
+    a missing column).
+    '''
+    class UndeclaresScoreObject(TableObject):
+        name: str = Field(default='')
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(64),
+        }
+
+    mismatches = UndeclaresScoreObject.verify_schema(h5_table)
+
+    assert len(mismatches) == 1
+    assert 'score' in mismatches[0]
+    assert 'not declared in _H5_TYPES' in mismatches[0]
+
+
+# ** test: verify_schema_type_mismatch
+def test_verify_schema_type_mismatch(h5_table) -> None:
+    '''
+    Test that verify_schema() reports a PyTables type mismatch for a column
+    declared with a different type than the one actually present in the table.
+    '''
+    class WrongTypeObject(TableObject):
+        name: str = Field(default='')
+        score: int = Field(default=0)
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name':  tables.StringCol(64),
+            'score': tables.Int32Col(),  # actual column is Float64Col
+        }
+
+    mismatches = WrongTypeObject.verify_schema(h5_table)
+
+    assert len(mismatches) == 1
+    assert 'score' in mismatches[0]
+    assert 'type mismatch' in mismatches[0]
+
+
+# ** test: verify_schema_string_width_mismatch
+def test_verify_schema_string_width_mismatch(h5_table) -> None:
+    '''
+    Test that verify_schema() reports a StringCol width mismatch, which the
+    PyTables "string" type identifier alone does not distinguish.
+    '''
+    class NarrowNameObject(TableObject):
+        name: str = Field(default='')
+        score: float = Field(default=0.0)
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name':  tables.StringCol(16),  # actual column is StringCol(64)
+            'score': tables.Float64Col(),
+        }
+
+    mismatches = NarrowNameObject.verify_schema(h5_table)
+
+    assert len(mismatches) == 1
+    assert 'name' in mismatches[0]
+    assert 'width mismatch' in mismatches[0]
+
+
+# ** test: schema_fingerprint_deterministic
+def test_schema_fingerprint_deterministic() -> None:
+    '''
+    Test that schema_fingerprint() returns the same value across repeated calls
+    and is unaffected by _H5_TYPES declaration order.
+    '''
+    class OrderAObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name':  tables.StringCol(64),
+            'score': tables.Float64Col(),
+        }
+
+    class OrderBObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'score': tables.Float64Col(),
+            'name':  tables.StringCol(64),
+        }
+
+    assert OrderAObject.schema_fingerprint() == OrderAObject.schema_fingerprint()
+    assert OrderAObject.schema_fingerprint() == OrderBObject.schema_fingerprint()
+
+
+# ** test: schema_fingerprint_changes_with_schema
+def test_schema_fingerprint_changes_with_schema() -> None:
+    '''
+    Test that schema_fingerprint() changes when a column's declared width changes.
+    '''
+    class NarrowObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(16),
+        }
+
+    class WideObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(64),
+        }
+
+    assert NarrowObject.schema_fingerprint() != WideObject.schema_fingerprint()
 
 
 # ** test: node_object_to_attrs_applies_alias

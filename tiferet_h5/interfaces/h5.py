@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 # ** app
 from tiferet.interfaces import FileService
 
+from ..mappers.settings import TableObject
+
 # *** interfaces
 
 # ** interface: h5_service
@@ -140,6 +142,30 @@ class H5Service(FileService):
         :type kwargs: dict
         :return: The existing or newly created PyTables table object.
         :rtype: Any
+        '''
+        raise NotImplementedError()
+
+    # * method: assert_schema
+    @abstractmethod
+    def assert_schema(self,
+            path: str,
+            table_cls: type[TableObject],
+            check_version: bool = True,
+        ) -> None:
+        '''
+        Verify the table at ``path`` matches ``table_cls``'s declared schema,
+        raising a structured error on any detected drift.
+
+        This is an opt-in check -- it is never invoked automatically by
+        ``get_table`` or ``get_or_create_table``.
+
+        :param path: Absolute HDF5 path for the table to verify.
+        :type path: str
+        :param table_cls: The ``TableObject`` subclass declaring the expected schema.
+        :type table_cls: type[TableObject]
+        :param check_version: Whether to additionally compare a stored
+            ``schema_version`` node attribute against the current fingerprint.
+        :type check_version: bool
         '''
         raise NotImplementedError()
 
