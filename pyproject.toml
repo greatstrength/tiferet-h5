@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
-    "tiferet==2.0.0b16",
+    "tiferet>=2.0.3,<2.1",
     "tables>=3.10.0",
 ]
 

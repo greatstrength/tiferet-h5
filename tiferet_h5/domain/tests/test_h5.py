@@ -163,3 +163,26 @@ def test_h5_node_types(node_type: str) -> None:
     node = H5Node(path='/some/path', node_type=node_type)
 
     assert node.node_type == node_type
+
+# ** test: h5_column_coerces_numeric_name_to_str
+def test_h5_column_coerces_numeric_name_to_str() -> None:
+    '''
+    Test that H5Column, a plain DomainObject with no model_config override,
+    inherits DomainObject's coerce_numbers_to_str=True default and silently
+    coerces a numeric value assigned to a str field rather than raising.
+    '''
+    col = H5Column(name=123, dtype='string256')
+
+    assert col.name == '123'
+    assert isinstance(col.name, str)
+
+# ** test: h5_node_coerces_numeric_node_type_to_str
+def test_h5_node_coerces_numeric_node_type_to_str() -> None:
+    '''
+    Test that H5Node, a plain DomainObject with no model_config override,
+    also inherits the coerce_numbers_to_str=True default on its str fields.
+    '''
+    node = H5Node(path='/some/path', node_type=123)
+
+    assert node.node_type == '123'
+    assert isinstance(node.node_type, str)

@@ -10,7 +10,7 @@ from typing import Any, ClassVar, Dict, Optional
 import numpy as np
 import pytest
 import tables
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, ValidationError
 
 # ** app
 from tiferet.domain import DomainObject
@@ -420,3 +420,25 @@ def test_node_object_round_trip() -> None:
 
     assert restored.name == original.name
     assert restored.description == original.description
+
+# ** test: node_object_coerces_numeric_str_field
+def test_node_object_coerces_numeric_str_field() -> None:
+    '''
+    Test that NodeObject, which does not override TransferObject's
+    model_config, inherits the coerce_numbers_to_str=True default and
+    silently coerces a numeric value assigned to a str field.
+    '''
+    obj = MetaNodeObject(name=42, description='Arithmetic ops')
+
+    assert obj.name == '42'
+    assert isinstance(obj.name, str)
+
+# ** test: table_object_rejects_numeric_str_field
+def test_table_object_rejects_numeric_str_field() -> None:
+    '''
+    Test that TableObject's explicit coerce_numbers_to_str=False override
+    still rejects a numeric value assigned to a str field, in contrast to
+    NodeObject/plain DomainObject subclasses that inherit the new default.
+    '''
+    with pytest.raises(ValidationError):
+        ItemTableObject(name=42, score=SAMPLE_SCORE)
