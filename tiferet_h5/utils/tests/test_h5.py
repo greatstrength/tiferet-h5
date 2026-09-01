@@ -523,7 +523,6 @@ def test_append_rows_unknown_column_raises_write_failed(h5_path: Path) -> None:
     assert exc_info.value.error_code == const.H5_WRITE_FAILED_ID
     assert isinstance(exc_info.value.__cause__, KeyError)
 
-
 # ** test: create_table_auto_creates_parents
 def test_create_table_auto_creates_parents(h5_path: Path) -> None:
     '''
@@ -540,7 +539,6 @@ def test_create_table_auto_creates_parents(h5_path: Path) -> None:
         assert h5.node_exists('/a/b') is True
         assert h5.node_exists('/a/b/c') is True
 
-
 # ** test: assert_schema_pass
 def test_assert_schema_pass(h5_with_table: Path) -> None:
     '''
@@ -549,7 +547,6 @@ def test_assert_schema_pass(h5_with_table: Path) -> None:
     '''
     with H5Client(h5_with_table, mode='r') as h5:
         h5.assert_schema('/items', SampleTableObject)  # must not raise
-
 
 # ** test: assert_schema_column_mismatch_raises
 def test_assert_schema_column_mismatch_raises(h5_with_table: Path) -> None:
@@ -571,7 +568,6 @@ def test_assert_schema_column_mismatch_raises(h5_with_table: Path) -> None:
     assert exc_info.value.error_code == const.H5_SCHEMA_MISMATCH_ID
     assert any('value' in m for m in exc_info.value.kwargs['mismatches'])
 
-
 # ** test: assert_schema_version_mismatch_raises
 def test_assert_schema_version_mismatch_raises(h5_path: Path) -> None:
     '''
@@ -589,7 +585,6 @@ def test_assert_schema_version_mismatch_raises(h5_path: Path) -> None:
     assert exc_info.value.error_code == const.H5_SCHEMA_MISMATCH_ID
     assert any('version' in m for m in exc_info.value.kwargs['mismatches'])
 
-
 # ** test: assert_schema_version_match_passes
 def test_assert_schema_version_match_passes(h5_path: Path) -> None:
     '''
@@ -602,7 +597,6 @@ def test_assert_schema_version_match_passes(h5_path: Path) -> None:
 
     with H5Client(h5_path, mode='r') as h5:
         h5.assert_schema('/items', SampleTableObject)  # must not raise
-
 
 # ** test: assert_schema_check_version_false_skips_version
 def test_assert_schema_check_version_false_skips_version(h5_path: Path) -> None:

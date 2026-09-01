@@ -351,7 +351,6 @@ def test_verify_schema_pass(h5_table) -> None:
 
     assert mismatches == []
 
-
 # ** test: verify_schema_missing_column
 def test_verify_schema_missing_column(h5_table) -> None:
     '''
@@ -373,7 +372,6 @@ def test_verify_schema_missing_column(h5_table) -> None:
     assert 'missing' in mismatches[0]
     assert 'declared in _H5_TYPES' in mismatches[0]
 
-
 # ** test: verify_schema_extra_column
 def test_verify_schema_extra_column(h5_table) -> None:
     '''
@@ -392,7 +390,6 @@ def test_verify_schema_extra_column(h5_table) -> None:
     assert len(mismatches) == 1
     assert 'score' in mismatches[0]
     assert 'not declared in _H5_TYPES' in mismatches[0]
-
 
 # ** test: verify_schema_type_mismatch
 def test_verify_schema_type_mismatch(h5_table) -> None:
@@ -414,7 +411,6 @@ def test_verify_schema_type_mismatch(h5_table) -> None:
     assert 'score' in mismatches[0]
     assert 'type mismatch' in mismatches[0]
 
-
 # ** test: verify_schema_string_width_mismatch
 def test_verify_schema_string_width_mismatch(h5_table) -> None:
     '''
@@ -434,7 +430,6 @@ def test_verify_schema_string_width_mismatch(h5_table) -> None:
     assert len(mismatches) == 1
     assert 'name' in mismatches[0]
     assert 'width mismatch' in mismatches[0]
-
 
 # ** test: schema_fingerprint_deterministic
 def test_schema_fingerprint_deterministic() -> None:
@@ -457,7 +452,6 @@ def test_schema_fingerprint_deterministic() -> None:
     assert OrderAObject.schema_fingerprint() == OrderAObject.schema_fingerprint()
     assert OrderAObject.schema_fingerprint() == OrderBObject.schema_fingerprint()
 
-
 # ** test: schema_fingerprint_changes_with_schema
 def test_schema_fingerprint_changes_with_schema() -> None:
     '''
@@ -474,7 +468,6 @@ def test_schema_fingerprint_changes_with_schema() -> None:
         }
 
     assert NarrowObject.schema_fingerprint() != WideObject.schema_fingerprint()
-
 
 # ** test: node_object_to_attrs_applies_alias
 def test_node_object_to_attrs_applies_alias() -> None:
