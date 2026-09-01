@@ -3,6 +3,7 @@
 # *** imports
 
 # ** core
+import inspect
 from pathlib import Path
 from typing import Any, ClassVar, Dict
 
@@ -77,6 +78,29 @@ def h5_with_table(h5_path: Path) -> Path:
         SampleTableObject(name='Alpha', value=1.0).to_row(t)
         SampleTableObject(name='Beta',  value=2.0).to_row(t)
         SampleTableObject(name='Gamma', value=3.0).to_row(t)
+        t.flush()
+    return h5_path
+
+
+# ** constant: large_table_row_count
+LARGE_TABLE_ROW_COUNT = 2000
+
+
+# ** fixture: h5_with_large_table
+@pytest.fixture
+def h5_with_large_table(h5_path: Path) -> Path:
+    '''
+    Create an HDF5 file with a table large enough (2000 rows) to make the
+    memory/behavior distinction between read_rows() and iter_rows() -- and
+    the presence/absence of an index -- observable rather than incidental.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        t = h5.create_table('/items', SampleTableObject.get_description())
+        row = t.row
+        for i in range(LARGE_TABLE_ROW_COUNT):
+            row['name'] = f'item{i}'.encode('utf-8')
+            row['value'] = float(i)
+            row.append()
         t.flush()
     return h5_path
 
@@ -610,3 +634,193 @@ def test_assert_schema_check_version_false_skips_version(h5_path: Path) -> None:
 
     with H5Client(h5_path, mode='r') as h5:
         h5.assert_schema('/items', SampleTableObject, check_version=False)  # must not raise
+
+# ** test: iter_rows_returns_generator
+def test_iter_rows_returns_generator(h5_with_large_table: Path) -> None:
+    '''
+    Test that iter_rows() returns a true generator rather than a list,
+    proving it does not eagerly materialize the result set the way
+    read_rows() does.
+    '''
+    with H5Client(h5_with_large_table, mode='r') as h5:
+        result = h5.iter_rows('/items')
+        assert inspect.isgenerator(result)
+
+        # A generator can yield one row without exhausting the rest.
+        first = next(result)
+        assert first['name'] == 'item0'
+
+# ** test: iter_rows_matches_read_rows
+def test_iter_rows_matches_read_rows(h5_with_large_table: Path) -> None:
+    '''
+    Test that iter_rows() yields exactly the same rows, in the same order,
+    as the eager read_rows() over a large table.
+    '''
+    with H5Client(h5_with_large_table, mode='r') as h5:
+        streamed = list(h5.iter_rows('/items'))
+        materialized = h5.read_rows('/items')
+
+    assert streamed == materialized
+    assert len(streamed) == LARGE_TABLE_ROW_COUNT
+
+# ** test: iter_rows_sliced
+def test_iter_rows_sliced(h5_with_table: Path) -> None:
+    '''
+    Test that iter_rows() with start/stop streams only the sliced subset.
+    '''
+    with H5Client(h5_with_table, mode='r') as h5:
+        rows = list(h5.iter_rows('/items', start=1, stop=3))
+
+    assert len(rows) == 2
+    assert rows[0]['name'] == 'Beta'
+    assert rows[1]['name'] == 'Gamma'
+
+# ** test: iter_rows_condition
+def test_iter_rows_condition(h5_with_large_table: Path) -> None:
+    '''
+    Test that iter_rows() with a condition string streams only matching rows.
+    '''
+    with H5Client(h5_with_large_table, mode='r') as h5:
+        rows = list(h5.iter_rows('/items', condition='value >= 1998'))
+
+    assert len(rows) == 2
+    assert {r['name'] for r in rows} == {'item1998', 'item1999'}
+
+# ** test: iter_query
+def test_iter_query(h5_with_table: Path) -> None:
+    '''
+    Test that iter_query() streams only rows matching the condition string.
+    '''
+    with H5Client(h5_with_table, mode='r') as h5:
+        rows = list(h5.iter_query('/items', 'name == b"Alpha"'))
+
+    assert len(rows) == 1
+    assert rows[0]['name'] == 'Alpha'
+
+# ** test: iter_rows_node_not_found_raises_immediately
+def test_iter_rows_node_not_found_raises_immediately(existing_h5: Path) -> None:
+    '''
+    Test that iter_rows() raises H5_NODE_NOT_FOUND synchronously on the call
+    itself (fail-fast), not deferred until the generator is first iterated.
+    '''
+    with H5Client(existing_h5, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.iter_rows('/does_not_exist')
+
+    assert exc_info.value.error_code == const.H5_NODE_NOT_FOUND_ID
+
+# ** test: iter_rows_invalid_condition_raises_immediately
+def test_iter_rows_invalid_condition_raises_immediately(h5_with_table: Path) -> None:
+    '''
+    Test that iter_rows() raises H5_QUERY_FAILED synchronously for an
+    unparseable condition string, chaining the SyntaxError as cause.
+    '''
+    with H5Client(h5_with_table, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.iter_rows('/items', condition='value >>> 1')
+
+    assert exc_info.value.error_code == const.H5_QUERY_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, SyntaxError)
+
+# ** test: create_index_and_is_indexed
+def test_create_index_and_is_indexed(h5_with_large_table: Path) -> None:
+    '''
+    Test that is_indexed() reflects the column's state before and after
+    create_index() is called.
+    '''
+    with H5Client(h5_with_large_table, mode='a') as h5:
+        assert h5.is_indexed('/items', 'value') is False
+        h5.create_index('/items', 'value')
+        assert h5.is_indexed('/items', 'value') is True
+
+# ** test: create_index_unknown_column_raises
+def test_create_index_unknown_column_raises(h5_with_table: Path) -> None:
+    '''
+    Test that create_index() raises H5_INDEX_FAILED for an unknown column name.
+    '''
+    with H5Client(h5_with_table, mode='a') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.create_index('/items', 'bogus')
+
+    assert exc_info.value.error_code == const.H5_INDEX_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, AttributeError)
+
+# ** test: create_index_already_indexed_raises
+def test_create_index_already_indexed_raises(h5_with_large_table: Path) -> None:
+    '''
+    Test that create_index() raises H5_INDEX_FAILED when the column already
+    has an index, chaining PyTables' own ValueError as cause.
+    '''
+    with H5Client(h5_with_large_table, mode='a') as h5:
+        h5.create_index('/items', 'value')
+        with pytest.raises(ServiceError) as exc_info:
+            h5.create_index('/items', 'value')
+
+    assert exc_info.value.error_code == const.H5_INDEX_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+# ** test: query_returns_correct_results_on_indexed_column
+def test_query_returns_correct_results_on_indexed_column(h5_with_large_table: Path) -> None:
+    '''
+    Test that query() against an indexed column still returns correct
+    results -- index use by the PyTables condition evaluator is transparent
+    to callers, so behavior (not internal plan) is what tiferet-h5 verifies.
+    '''
+    with H5Client(h5_with_large_table, mode='a') as h5:
+        h5.create_index('/items', 'value')
+        rows = h5.query('/items', 'value >= 1997')
+
+    assert len(rows) == 3
+    assert {r['name'] for r in rows} == {'item1997', 'item1998', 'item1999'}
+
+# ** test: reindex_specific_column
+def test_reindex_specific_column(h5_with_large_table: Path) -> None:
+    '''
+    Test that reindex() with an explicit column recomputes that column's
+    index without raising, after additional rows are appended.
+    '''
+    with H5Client(h5_with_large_table, mode='a') as h5:
+        h5.create_index('/items', 'value')
+        h5.append_rows('/items', [{'name': 'extra', 'value': 9999.0}])
+        h5.reindex('/items', column='value')
+
+        rows = h5.query('/items', 'value == 9999.0')
+
+    assert len(rows) == 1
+    assert rows[0]['name'] == 'extra'
+
+# ** test: reindex_not_indexed_column_raises
+def test_reindex_not_indexed_column_raises(h5_with_table: Path) -> None:
+    '''
+    Test that reindex() raises H5_INDEX_FAILED for a column that has never
+    been indexed, rather than silently no-oping the way PyTables' own
+    Column.reindex() does.
+    '''
+    with H5Client(h5_with_table, mode='a') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.reindex('/items', column='value')
+
+    assert exc_info.value.error_code == const.H5_INDEX_FAILED_ID
+
+# ** test: reindex_all_columns_when_column_none
+def test_reindex_all_columns_when_column_none(h5_with_large_table: Path) -> None:
+    '''
+    Test that reindex() with no column argument recomputes every currently
+    indexed column on the table without raising.
+    '''
+    with H5Client(h5_with_large_table, mode='a') as h5:
+        h5.create_index('/items', 'name')
+        h5.create_index('/items', 'value')
+        h5.reindex('/items')  # must not raise
+
+        assert h5.is_indexed('/items', 'name') is True
+        assert h5.is_indexed('/items', 'value') is True
+
+# ** test: reindex_no_indexed_columns_is_a_noop
+def test_reindex_no_indexed_columns_is_a_noop(h5_with_table: Path) -> None:
+    '''
+    Test that reindex() with no column argument and no existing indexes
+    on the table does not raise.
+    '''
+    with H5Client(h5_with_table, mode='a') as h5:
+        h5.reindex('/items')  # must not raise
