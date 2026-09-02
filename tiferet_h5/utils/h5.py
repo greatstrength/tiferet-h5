@@ -1259,12 +1259,16 @@ class H5Client(FileLoader, H5Service):
         one, and would never actually apply changed compression settings
         here. ``copy_children(..., filters=...)`` forwards ``filters`` as a
         genuine per-leaf override during copying, which is what this method
-        needs. The rewrite happens against a temporary destination file; the
-        currently-open file handle is then closed, the original file is
-        atomically replaced with the compacted copy, and the file is reopened
-        in its original mode -- so this method may be called from within a
-        normal ``with H5Client(...) as h5:`` block without the caller
-        managing the close/reopen itself.
+        needs. ``propindexes=True`` is always passed as well -- PyTables'
+        default for a plain ``copy_children`` call silently drops any
+        existing ``create_index()``-created column index during the copy,
+        which would otherwise leave a caller's index invisibly gone after a
+        routine maintenance call. The rewrite happens against a temporary
+        destination file; the currently-open file handle is then closed, the
+        original file is atomically replaced with the compacted copy, and
+        the file is reopened in its original mode -- so this method may be
+        called from within a normal ``with H5Client(...) as h5:`` block
+        without the caller managing the close/reopen itself.
 
         :param filters: Optional ``tables.Filters`` instance to apply (or change)
             compression settings on the rewritten file. When omitted, existing
@@ -1284,7 +1288,9 @@ class H5Client(FileLoader, H5Service):
 
             # Copy the live file's contents (recursively, from root) into a
             # fresh rewrite, optionally overriding per-leaf filter settings.
-            copy_kwargs = {'recursive': True}
+            # propindexes=True keeps any existing column index intact across
+            # the copy -- PyTables would otherwise silently drop it.
+            copy_kwargs = {'recursive': True, 'propindexes': True}
             if filters is not None:
                 copy_kwargs['filters'] = filters
             with tables.open_file(str(temp_path), mode='w') as dst:

@@ -967,6 +967,23 @@ def test_compact_accepts_filters_to_apply_compression(h5_with_large_table: Path)
 
     assert len(rows) == LARGE_TABLE_ROW_COUNT
 
+# ** test: compact_preserves_column_index
+def test_compact_preserves_column_index(h5_with_large_table: Path) -> None:
+    '''
+    Test that compact() preserves an existing column index across the
+    rewrite. PyTables' copy_children() silently drops indexes by default
+    (propindexes defaults to False) -- compact() must pass propindexes=True
+    explicitly, or a caller's create_index() would be invisibly undone by a
+    routine maintenance call.
+    '''
+    with H5Client(h5_with_large_table, mode='a') as h5:
+        h5.create_index('/items', 'value')
+        assert h5.is_indexed('/items', 'value') is True
+
+        h5.compact()
+
+        assert h5.is_indexed('/items', 'value') is True
+
 # ** test: compact_not_open_raises
 def test_compact_not_open_raises(h5_path: Path) -> None:
     '''

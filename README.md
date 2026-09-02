@@ -160,6 +160,8 @@ steps = steps_repo.list(key='calc')
 
 `table_path`/`node_path` are `str.format()` templates -- any `**kwargs` passed to a method (here, `key='calc'`) interpolate into the path, so one repository instance serves every feature group in the file. See [docs/guides/repos.md](docs/guides/repos.md) for the full method reference, the repository-level compression default, and why `TableRepository`/`NodeRepository` should never be multiply inherited into a single class.
 
+See [examples/catalog_app](examples/catalog_app) for a complete, runnable application built on this pattern, including opt-in schema verification and file compaction alongside the repository mixins.
+
 ## Package Layout
 
 ```
@@ -182,8 +184,9 @@ tiferet_h5/
 
 - [Domain Objects](docs/guides/domain.md) — `H5Column`, `H5TableSchema`, `H5Node`
 - [Mappers](docs/guides/mappers.md) — `TableObject`, `NodeObject`, aliasing, nested modeling
-- [H5Client](docs/guides/utils/h5.md) — full method reference and error codes
+- [H5Client](docs/guides/utils/h5.md) — full method reference, error codes, and concurrency guidance
 - [Repos](docs/guides/repos.md) — `H5Repository`, `TableRepository`, `NodeRepository` CRUD mixins
+- [examples/catalog_app](examples/catalog_app) — a complete, runnable application exercising the full stack end-to-end
 
 ## License
 

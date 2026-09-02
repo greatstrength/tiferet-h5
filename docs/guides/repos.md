@@ -92,7 +92,7 @@ items_repo = CatalogItemsRepository('catalog.h5')
 meta_repo = CatalogMetaRepository('catalog.h5')
 ```
 
-See the README's worked example for the full pattern in context.
+See the README's worked example, and [examples/catalog_app](../../examples/catalog_app) for a complete, runnable application built on this exact pattern.
 
 ---
 
