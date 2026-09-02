@@ -133,7 +133,7 @@ Feature: Calculator Features — Basic arithmetic operations
 
 ### 4. Use a Repository
 
-`TableRepository` and `NodeRepository` (`tiferet_h5.repos.mixins`) remove the hand-rolled `get_or_create_table()`/`to_attrs()` orchestration a repository would otherwise write itself -- compose one of each with `H5Repository` for the group's own metadata and its child table respectively:
+`TableRepository` and `NodeRepository` (`tiferet_h5.repos.core`) remove the hand-rolled `get_or_create_table()`/`to_attrs()` orchestration a repository would otherwise write itself -- compose one of each with `H5Repository` for the group's own metadata and its child table respectively:
 
 ```python
 from tiferet_h5 import H5Repository, NodeRepository, TableRepository
@@ -174,8 +174,8 @@ tiferet_h5/
 ├── utils/
 │   └── h5.py            H5Client (alias: H5); also hosts H5 error code string constants
 └── repos/
-    ├── h5.py            H5Repository base
-    └── mixins.py        TableRepository, NodeRepository CRUD mixins
+    ├── core.py          TableRepository, NodeRepository CRUD mixins
+    └── h5.py            H5Repository base
 ```
 
 ## Documentation

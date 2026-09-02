@@ -1,4 +1,4 @@
-"""tiferet_h5 Repos Mixins"""
+"""tiferet_h5 Repos Core"""
 
 # *** imports
 

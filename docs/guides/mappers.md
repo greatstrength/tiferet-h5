@@ -287,7 +287,7 @@ with H5Client('catalog.h5', mode='r') as h5:
 - `NodeObject` subclass fields should only include scalar values (strings, numbers, booleans) — HDF5 attributes do not support nested structures.
 - `TableObject` subclass fields should correspond 1-to-1 with HDF5 column types declared in `_H5_TYPES`.
 - When a parent group holds both attributes and a child table, keep the `NodeObject` and `TableObject` as separate classes.  A concrete repository is responsible for orchestrating reads and writes to both.
-- Prefer `TableRepository`/`NodeRepository` (`tiferet_h5.repos.mixins`) over hand-rolling `H5Client.get_or_create_table()` orchestration in a repository's `save()` method -- see [docs/guides/repos.md](repos.md) for the CRUD mixin pattern.
+- Prefer `TableRepository`/`NodeRepository` (`tiferet_h5.repos.core`) over hand-rolling `H5Client.get_or_create_table()` orchestration in a repository's `save()` method -- see [docs/guides/repos.md](repos.md) for the CRUD mixin pattern.
 
 ---
 

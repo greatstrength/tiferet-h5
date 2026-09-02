@@ -4,7 +4,7 @@
 
 ## Overview
 
-The repos layer persists `TableObject`/`NodeObject` pairs to HDF5 files. `H5Repository` is the generic base every concrete repository extends for file/mode management. `TableRepository` and `NodeRepository` (`tiferet_h5.repos.mixins`) are reusable CRUD mixins that remove the hand-rolled `get_or_create_table()` -> `to_row()`/`from_row()` -> `flush()` dance (and the analogous `to_attrs()`/`from_attrs()` dance for nodes) that every concrete repository used to write from scratch.
+The repos layer persists `TableObject`/`NodeObject` pairs to HDF5 files. `H5Repository` is the generic base every concrete repository extends for file/mode management. `TableRepository` and `NodeRepository` (`tiferet_h5.repos.core`) are reusable CRUD mixins that remove the hand-rolled `get_or_create_table()` -> `to_row()`/`from_row()` -> `flush()` dance (and the analogous `to_attrs()`/`from_attrs()` dance for nodes) that every concrete repository used to write from scratch.
 
 ---
 
@@ -18,7 +18,7 @@ Generic base providing `__init__(h5_file, mode='a')` and `client(mode=None) -> H
 
 ## TableRepository
 
-**Module:** `tiferet_h5.repos.mixins`
+**Module:** `tiferet_h5.repos.core`
 
 A mixin for a declared `TableObject` class bound to a fixed (or templated) HDF5 table path.
 
@@ -53,7 +53,7 @@ class WidgetRepository(TableRepository, H5Repository):
 
 ## NodeRepository
 
-**Module:** `tiferet_h5.repos.mixins`
+**Module:** `tiferet_h5.repos.core`
 
 A mixin for a declared `NodeObject` class bound to a fixed (or templated) HDF5 node path.
 
@@ -102,5 +102,5 @@ See the README's worked example for the full pattern in context.
 from tiferet_h5 import H5Repository, TableRepository, NodeRepository
 # or
 from tiferet_h5.repos import H5Repository, TableRepository, NodeRepository
-from tiferet_h5.repos.mixins import TableRepository, NodeRepository
+from tiferet_h5.repos.core import TableRepository, NodeRepository
 ```

@@ -1,4 +1,4 @@
-"""tiferet_h5 Repos Mixins Tests"""
+"""tiferet_h5 Repos Core Tests"""
 
 # *** imports
 
@@ -15,8 +15,8 @@ from pydantic import AliasChoices, Field
 from tiferet.interfaces import ServiceError
 
 from ...mappers.settings import NodeObject, TableObject
+from ..core import NodeRepository, TableRepository
 from ..h5 import H5Repository
-from ..mixins import NodeRepository, TableRepository
 
 # *** constants
 
