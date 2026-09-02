@@ -6,6 +6,9 @@
 from abc import abstractmethod
 from typing import Any, Dict, Iterator, List, Optional
 
+# ** infra
+import tables
+
 # ** app
 from tiferet.interfaces import FileService
 
@@ -87,6 +90,7 @@ class H5Service(FileService):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -100,6 +104,8 @@ class H5Service(FileService):
         :type description: type
         :param title: Optional human-readable title for the table.
         :type title: str
+        :param filters: Optional ``tables.Filters`` instance enabling compression.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Additional keyword arguments forwarded to
             ``tables.File.create_table``.
         :type kwargs: dict
@@ -127,6 +133,7 @@ class H5Service(FileService):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -138,6 +145,9 @@ class H5Service(FileService):
         :type description: type
         :param title: Optional title used when creating.
         :type title: str
+        :param filters: Optional ``tables.Filters`` instance enabling compression,
+            forwarded to ``create_table`` on the create path only.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Extra kwargs forwarded to ``create_table`` when creating.
         :type kwargs: dict
         :return: The existing or newly created PyTables table object.
@@ -349,6 +359,7 @@ class H5Service(FileService):
             path: str,
             data: Any,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
         ) -> Any:
         '''
         Create an array node at the specified path.
@@ -359,8 +370,25 @@ class H5Service(FileService):
         :type data: Any
         :param title: Optional human-readable title.
         :type title: str
-        :return: The created PyTables array object.
+        :param filters: Optional ``tables.Filters`` instance. When given, creates
+            a compressed ``CArray`` instead of a plain ``Array``.
+        :type filters: Optional[tables.Filters]
+        :return: The created PyTables array (or CArray) object.
         :rtype: Any
+        '''
+        raise NotImplementedError()
+
+    # * method: compact
+    @abstractmethod
+    def compact(self, filters: Optional[tables.Filters] = None) -> None:
+        '''
+        Reclaim disk space left behind by deleted rows (and optionally apply new
+        compression settings) by rewriting the file and atomically replacing
+        the original with the compacted copy.
+
+        :param filters: Optional ``tables.Filters`` instance to apply (or change)
+            compression settings on the rewritten file.
+        :type filters: Optional[tables.Filters]
         '''
         raise NotImplementedError()
 

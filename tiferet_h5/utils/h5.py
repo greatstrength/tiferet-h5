@@ -3,10 +3,12 @@
 # *** imports
 
 # ** core
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 # ** infra
+import numpy as np
 import tables
 
 # ** app
@@ -53,6 +55,9 @@ H5_SCHEMA_MISMATCH_ID = 'H5_SCHEMA_MISMATCH'
 
 # ** constant: h5_index_failed_id
 H5_INDEX_FAILED_ID = 'H5_INDEX_FAILED'
+
+# ** constant: h5_compact_failed_id
+H5_COMPACT_FAILED_ID = 'H5_COMPACT_FAILED'
 
 # *** constants (messages)
 
@@ -463,10 +468,15 @@ class H5Client(FileLoader, H5Service):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
         Create a table node at the specified path using an ``IsDescription`` schema.
+
+        ``Table`` is a chunked PyTables leaf, so it natively supports compression
+        via ``filters`` -- pass a ``tables.Filters(complevel=..., complib=...)``
+        instance to compress the table on disk.
 
         :param path: Absolute HDF5 path for the new table.
         :type path: str
@@ -474,6 +484,8 @@ class H5Client(FileLoader, H5Service):
         :type description: type
         :param title: Optional human-readable title.
         :type title: str
+        :param filters: Optional ``tables.Filters`` instance enabling compression.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Additional kwargs forwarded to ``tables.File.create_table``.
         :type kwargs: dict
         :return: The created PyTables table object.
@@ -505,6 +517,7 @@ class H5Client(FileLoader, H5Service):
                 table_name,
                 description,
                 title=title,
+                filters=filters,
                 **kwargs,
             )
 
@@ -557,6 +570,7 @@ class H5Client(FileLoader, H5Service):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -568,6 +582,9 @@ class H5Client(FileLoader, H5Service):
         :type description: type
         :param title: Optional title used when creating.
         :type title: str
+        :param filters: Optional ``tables.Filters`` instance enabling compression,
+            forwarded to ``create_table`` on the create path only.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Extra kwargs forwarded to ``create_table`` when creating.
         :type kwargs: dict
         :return: The existing or newly created PyTables table object.
@@ -579,7 +596,7 @@ class H5Client(FileLoader, H5Service):
             return self.get_table(path)
 
         # Otherwise create and return a new table.
-        return self.create_table(path, description, title=title, **kwargs)
+        return self.create_table(path, description, title=title, filters=filters, **kwargs)
 
     # * method: append_rows
     def append_rows(self,
@@ -1147,9 +1164,16 @@ class H5Client(FileLoader, H5Service):
             path: str,
             data: Any,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
         ) -> Any:
         '''
         Create an array node at the specified path.
+
+        A plain PyTables ``Array`` (the default, when ``filters`` is omitted) is a
+        contiguous, non-chunked leaf and cannot be compressed at the HDF5 level.
+        When ``filters`` is given, a chunked ``CArray`` is created instead --
+        ``CArray`` supports compression, at the cost of requiring a fixed shape
+        inferred from ``data`` up front.
 
         :param path: Absolute HDF5 path for the new array.
         :type path: str
@@ -1157,7 +1181,10 @@ class H5Client(FileLoader, H5Service):
         :type data: Any
         :param title: Optional human-readable title.
         :type title: str
-        :return: The created PyTables array object.
+        :param filters: Optional ``tables.Filters`` instance. When given, creates
+            a compressed ``CArray`` instead of a plain ``Array``.
+        :type filters: Optional[tables.Filters]
+        :return: The created PyTables array (or CArray) object.
         :rtype: Any
         :raises ServiceError: If the file is not open or creation fails.
         '''
@@ -1175,8 +1202,23 @@ class H5Client(FileLoader, H5Service):
             # Resolve the parent group.
             parent = self.h5file.get_node(parent_path)
 
-            # Create and return the array node.
-            return self.h5file.create_array(parent, array_name, data, title=title)
+            # Without filters, create a plain (uncompressed) Array -- unchanged
+            # behavior. With filters, create a compressed CArray instead, since
+            # plain Array is contiguous/non-chunked and cannot be compressed.
+            if filters is None:
+                return self.h5file.create_array(parent, array_name, data, title=title)
+
+            arr = np.asarray(data)
+            node = self.h5file.create_carray(
+                parent,
+                array_name,
+                atom=tables.Atom.from_dtype(arr.dtype),
+                shape=arr.shape,
+                title=title,
+                filters=filters,
+            )
+            node[:] = arr
+            return node
 
         except tables.NoSuchNodeError as e:
 
@@ -1198,6 +1240,97 @@ class H5Client(FileLoader, H5Service):
                 original_error=str(e),
                 path=path,
             )
+
+    # * method: compact
+    def compact(self, filters: Optional[tables.Filters] = None) -> None:
+        '''
+        Reclaim disk space left behind by deleted rows (and optionally apply new
+        compression settings) by copying the file's live contents into a fresh
+        rewrite and atomically replacing the original with it.
+
+        HDF5/PyTables never shrinks a file in place after row deletion -- freed
+        space is only reclaimed by a full copy-and-rewrite. This wraps PyTables'
+        own ``File.copy_children(recursive=True)`` (the same recursive-copy
+        machinery behind the ``ptrepack`` utility) rather than ``File.copy_file``:
+        every leaf already carries an explicit ``Filters`` instance (even a
+        default, uncompressed one) once created, and ``copy_file``'s own
+        ``filters`` kwarg only supplies a *default* for leaves with none of
+        their own -- it silently declines to override an already-explicit
+        one, and would never actually apply changed compression settings
+        here. ``copy_children(..., filters=...)`` forwards ``filters`` as a
+        genuine per-leaf override during copying, which is what this method
+        needs. The rewrite happens against a temporary destination file; the
+        currently-open file handle is then closed, the original file is
+        atomically replaced with the compacted copy, and the file is reopened
+        in its original mode -- so this method may be called from within a
+        normal ``with H5Client(...) as h5:`` block without the caller
+        managing the close/reopen itself.
+
+        :param filters: Optional ``tables.Filters`` instance to apply (or change)
+            compression settings on the rewritten file. When omitted, existing
+            per-leaf filter settings are preserved as-is.
+        :type filters: Optional[tables.Filters]
+        :raises ServiceError: If the file is not open, or the copy/replace fails.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
+
+        original_path = Path(self.path)
+        temp_path = original_path.with_name(original_path.name + '.compact.tmp')
+
+        try:
+
+            # Copy the live file's contents (recursively, from root) into a
+            # fresh rewrite, optionally overriding per-leaf filter settings.
+            copy_kwargs = {'recursive': True}
+            if filters is not None:
+                copy_kwargs['filters'] = filters
+            with tables.open_file(str(temp_path), mode='w') as dst:
+                self.h5file.copy_children('/', dst.root, **copy_kwargs)
+
+                # Preserve root-level user attributes and title, which
+                # copy_children (a children-only copy) does not carry over.
+                dst.title = self.h5file.title
+                src_root_attrs = self.h5file.root._v_attrs
+                for name in src_root_attrs._v_attrnamesuser:
+                    dst.root._v_attrs[name] = src_root_attrs[name]
+
+        except (tables.HDF5ExtError, OSError) as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_COMPACT_FAILED_ID,
+                f'Failed to copy HDF5 file at {original_path} during compaction: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=str(original_path),
+            )
+
+        # Close the original handle so the atomic replace below is safe, then
+        # swap the compacted rewrite into place and reopen in the same mode.
+        mode = self.mode
+        self.h5file.close()
+        self.h5file = None
+
+        try:
+
+            os.replace(temp_path, original_path)
+
+        except OSError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_COMPACT_FAILED_ID,
+                f'Failed to replace HDF5 file at {original_path} after compaction: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=str(original_path),
+            )
+
+        # Reopen the compacted file so the client remains usable afterward.
+        self.h5file = tables.open_file(str(original_path), mode=mode)
 
     # * method: get_array
     def get_array(self, path: str) -> Any:
