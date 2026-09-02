@@ -81,10 +81,8 @@ def h5_with_table(h5_path: Path) -> Path:
         t.flush()
     return h5_path
 
-
 # ** constant: large_table_row_count
 LARGE_TABLE_ROW_COUNT = 2000
-
 
 # ** fixture: h5_with_large_table
 @pytest.fixture
@@ -103,7 +101,6 @@ def h5_with_large_table(h5_path: Path) -> Path:
             row.append()
         t.flush()
     return h5_path
-
 
 # *** tests
 

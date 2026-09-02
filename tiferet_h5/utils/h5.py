@@ -70,6 +70,38 @@ VALID_H5_MODES = (
     'a',
 )
 
+# *** functions
+
+# ** function: normalize_row
+def normalize_row(table: Any, record: Any) -> Dict[str, Any]:
+    '''
+    Normalize a single PyTables record (a ``tables.Row`` instance or a
+    NumPy structured record, both of which support column-name item
+    access) into a plain Python dict.
+
+    Shared by ``H5Client.read_rows`` (eager, list-returning) and
+    ``H5Client.iter_rows`` (lazy, generator-returning) so both normalize
+    identically.
+
+    :param table: The source PyTables table (for ``colnames``).
+    :type table: Any
+    :param record: A single row record.
+    :type record: Any
+    :return: A dict mapping column names to Python-native values.
+    :rtype: Dict[str, Any]
+    '''
+
+    # Decode bytes and convert numpy scalars to Python natives per column.
+    row_dict = {}
+    for col in table.colnames:
+        val = record[col]
+        if isinstance(val, bytes):
+            val = val.decode('utf-8')
+        elif hasattr(val, 'item'):
+            val = val.item()
+        row_dict[col] = val
+    return row_dict
+
 # *** utils
 
 # ** util: h5_client
@@ -652,7 +684,7 @@ class H5Client(FileLoader, H5Service):
                 records = table.read(start=start, stop=stop)
 
             # Normalize each record into a plain Python dict.
-            result = [self._normalize_row(table, record) for record in records]
+            result = [normalize_row(table, record) for record in records]
 
             # Return the list of normalized dicts.
             return result
@@ -701,35 +733,6 @@ class H5Client(FileLoader, H5Service):
 
         # Delegate to read_rows with the condition applied.
         return self.read_rows(path, condition=condition)
-
-    # * method: _normalize_row
-    def _normalize_row(self, table: Any, record: Any) -> Dict[str, Any]:
-        '''
-        Normalize a single PyTables record (a ``tables.Row`` instance or a
-        NumPy structured record, both of which support column-name item
-        access) into a plain Python dict.
-
-        Shared by ``read_rows`` (eager, list-returning) and ``iter_rows``
-        (lazy, generator-returning) so both normalize identically.
-
-        :param table: The source PyTables table (for ``colnames``).
-        :type table: Any
-        :param record: A single row record.
-        :type record: Any
-        :return: A dict mapping column names to Python-native values.
-        :rtype: Dict[str, Any]
-        '''
-
-        # Decode bytes and convert numpy scalars to Python natives per column.
-        row_dict = {}
-        for col in table.colnames:
-            val = record[col]
-            if isinstance(val, bytes):
-                val = val.decode('utf-8')
-            elif hasattr(val, 'item'):
-                val = val.item()
-            row_dict[col] = val
-        return row_dict
 
     # * method: iter_rows
     def iter_rows(self,
@@ -821,7 +824,7 @@ class H5Client(FileLoader, H5Service):
 
             # Normalize and yield each row one at a time.
             for record in iterator:
-                yield self._normalize_row(table, record)
+                yield normalize_row(table, record)
 
         except (SyntaxError, NameError, tables.HDF5ExtError) as e:
 
