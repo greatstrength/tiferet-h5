@@ -10,7 +10,7 @@ try:
     from .interfaces import H5Service
     from .mappers import TableObject, NodeObject
     from .utils import H5Client, H5Client as H5
-    from .repos import H5Repository
+    from .repos import H5Repository, NodeRepository, TableRepository
 except Exception as e:
     import os, sys
     if not os.getenv('TIFERET_H5_SILENT_IMPORTS'):

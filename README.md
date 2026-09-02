@@ -133,33 +133,32 @@ Feature: Calculator Features — Basic arithmetic operations
 
 ### 4. Use a Repository
 
-Extend `H5Repository` for a clean, context-manager-driven persistence pattern:
+`TableRepository` and `NodeRepository` (`tiferet_h5.repos.core`) remove the hand-rolled `get_or_create_table()`/`to_attrs()` orchestration a repository would otherwise write itself -- compose one of each with `H5Repository` for the group's own metadata and its child table respectively:
 
 ```python
-from tiferet_h5 import H5Repository
+from tiferet_h5 import H5Repository, NodeRepository, TableRepository
 
-class FeatureCatalogRepository(H5Repository):
-    def save_feature(self, key: str, group: FeatureGroupObject, steps: List[FeatureStepObject]) -> None:
-        with self.client() as h5:
-            h5.create_group(f'/features/{key}')
-            for k, v in group.to_attrs().items():
-                h5.set_node_attr(f'/features/{key}', k, v)
-            t = h5.get_or_create_table(
-                f'/features/{key}/steps',
-                FeatureStepObject.get_description(),
-            )
-            for step in steps:
-                step.to_row(t)
-            t.flush()
+class FeatureMetaRepository(NodeRepository, H5Repository):
+    node_cls = FeatureGroupObject
+    node_path = '/features/{key}'
 
-    def load_feature(self, key: str):
-        with self.client(mode='r') as h5:
-            group = FeatureGroupObject.from_attrs(h5.get_node_attrs(f'/features/{key}'))
-            steps = [FeatureStepObject.from_row(r) for r in h5.read_rows(f'/features/{key}/steps')]
-            return group, steps
+class FeatureStepsRepository(TableRepository, H5Repository):
+    table_cls = FeatureStepObject
+    table_path = '/features/{key}/steps'
 
-repo = FeatureCatalogRepository('catalog.h5')
+meta_repo  = FeatureMetaRepository('catalog.h5')
+steps_repo = FeatureStepsRepository('catalog.h5')
+
+# Write
+meta_repo.save(FeatureGroupObject(name='Calculator', description='Arithmetic ops'), key='calc')
+steps_repo.save(FeatureStepObject(name='Add numbers', service_id='add_event'), key='calc')
+
+# Read
+group = meta_repo.get(key='calc')
+steps = steps_repo.list(key='calc')
 ```
+
+`table_path`/`node_path` are `str.format()` templates -- any `**kwargs` passed to a method (here, `key='calc'`) interpolate into the path, so one repository instance serves every feature group in the file. See [docs/guides/repos.md](docs/guides/repos.md) for the full method reference, the repository-level compression default, and why `TableRepository`/`NodeRepository` should never be multiply inherited into a single class.
 
 ## Package Layout
 
@@ -175,6 +174,7 @@ tiferet_h5/
 ├── utils/
 │   └── h5.py            H5Client (alias: H5); also hosts H5 error code string constants
 └── repos/
+    ├── core.py          TableRepository, NodeRepository CRUD mixins
     └── h5.py            H5Repository base
 ```
 
@@ -183,6 +183,7 @@ tiferet_h5/
 - [Domain Objects](docs/guides/domain.md) — `H5Column`, `H5TableSchema`, `H5Node`
 - [Mappers](docs/guides/mappers.md) — `TableObject`, `NodeObject`, aliasing, nested modeling
 - [H5Client](docs/guides/utils/h5.md) — full method reference and error codes
+- [Repos](docs/guides/repos.md) — `H5Repository`, `TableRepository`, `NodeRepository` CRUD mixins
 
 ## License
 
