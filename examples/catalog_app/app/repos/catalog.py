@@ -42,7 +42,6 @@ class CatalogItemsRepository(TableRepository, CatalogItemService, H5Repository):
     # * attribute: filters
     filters = tables.Filters(complib='zlib', complevel=5)
 
-
 # ** repo: catalog_meta_repository
 class CatalogMetaRepository(NodeRepository, CatalogMetaService, H5Repository):
     '''

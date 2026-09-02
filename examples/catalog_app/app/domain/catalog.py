@@ -25,7 +25,6 @@ class CatalogItem(DomainObject):
     # * attribute: price
     price: float = Field(default=0.0, description='Item price in dollars.')
 
-
 # ** model: catalog_meta
 class CatalogMeta(DomainObject):
     '''

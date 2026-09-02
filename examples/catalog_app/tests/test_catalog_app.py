@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 
 # ** app
-from tiferet import TiferetError
-from tiferet.blueprints.app import build_app
+from tiferet import App, TiferetError
 from tiferet.events import DomainEvent
 
 from app.events.catalog import (
@@ -34,7 +33,6 @@ def catalog_path(tmp_path: Path) -> str:
     '''
     return str(tmp_path / 'catalog.h5')
 
-
 # ** fixture: items_repo
 @pytest.fixture
 def items_repo(catalog_path: str) -> CatalogItemsRepository:
@@ -43,7 +41,6 @@ def items_repo(catalog_path: str) -> CatalogItemsRepository:
     '''
     return CatalogItemsRepository(catalog_path)
 
-
 # ** fixture: meta_repo
 @pytest.fixture
 def meta_repo(catalog_path: str) -> CatalogMetaRepository:
@@ -51,7 +48,6 @@ def meta_repo(catalog_path: str) -> CatalogMetaRepository:
     Return a CatalogMetaRepository bound to the test's HDF5 file.
     '''
     return CatalogMetaRepository(catalog_path)
-
 
 # *** tests
 
@@ -84,7 +80,6 @@ def test_two_repository_composition_persists_meta_and_items(
     assert len(items) == 1
     assert items[0].sku == 'BOLT-001'
 
-
 # ** test: repository_level_filters_apply_compression
 def test_repository_level_filters_apply_compression(items_repo: CatalogItemsRepository) -> None:
     '''
@@ -101,7 +96,6 @@ def test_repository_level_filters_apply_compression(items_repo: CatalogItemsRepo
         table = h5.get_table('/catalog/items')
         assert table.filters.complib == 'zlib'
         assert table.filters.complevel == 5
-
 
 # ** test: apply_item_discount_mutates_aggregate_independent_of_original_row
 def test_apply_item_discount_mutates_aggregate_independent_of_original_row(
@@ -127,7 +121,6 @@ def test_apply_item_discount_mutates_aggregate_independent_of_original_row(
     assert abs(discounted.price - 1.35) < 1e-9
     persisted = DomainEvent.handle(ListCatalogItems, dependencies={'catalog_item_service': items_repo})
     assert abs(persisted[0].price - 1.35) < 1e-9
-
 
 # ** test: remove_and_verify_and_compact_catalog
 def test_remove_and_verify_and_compact_catalog(items_repo: CatalogItemsRepository) -> None:
@@ -158,7 +151,6 @@ def test_remove_and_verify_and_compact_catalog(items_repo: CatalogItemsRepositor
     remaining = DomainEvent.handle(ListCatalogItems, dependencies={'catalog_item_service': items_repo})
     assert [obj.sku for obj in remaining] == ['BOLT-001']
 
-
 # ** test: add_catalog_item_rejects_duplicate_sku
 def test_add_catalog_item_rejects_duplicate_sku(items_repo: CatalogItemsRepository) -> None:
     '''
@@ -178,7 +170,6 @@ def test_add_catalog_item_rejects_duplicate_sku(items_repo: CatalogItemsReposito
         )
 
     assert exc_info.value.error_code == 'CATALOG_ITEM_ALREADY_EXISTS'
-
 
 # ** test: apply_item_discount_rejects_out_of_range_percent
 def test_apply_item_discount_rejects_out_of_range_percent(items_repo: CatalogItemsRepository) -> None:
@@ -200,7 +191,6 @@ def test_apply_item_discount_rejects_out_of_range_percent(items_repo: CatalogIte
 
     assert exc_info.value.error_code == 'INVALID_DISCOUNT_PERCENT'
 
-
 # ** fixture: config_driven_catalog_path
 @pytest.fixture
 def config_driven_catalog_path() -> Path:
@@ -218,24 +208,22 @@ def config_driven_catalog_path() -> Path:
     if path.exists():
         path.unlink()
 
-
 # ** test: config_driven_app_runs_add_item_and_list_items_features
 def test_config_driven_app_runs_add_item_and_list_items_features(config_driven_catalog_path: Path) -> None:
     '''
     Test that config.yml's sessions/services/features wiring resolves
-    correctly through tiferet.blueprints.app.build_app -- catches config.yml
-    typos (module_path/class_name/service_id mismatches) that the
+    correctly through tiferet.App -- catches config.yml typos
+    (module_path/class_name/service_id mismatches) that the
     DomainEvent.handle()-based tests above cannot, since those construct
     events directly rather than resolving them through the DI container.
     '''
-    app = build_app('catalog_client')
+    app = App('catalog_client')
 
     app.run('catalog.add_item', data={'sku': 'BOLT-001', 'name': 'Bolt', 'price': 1.50})
     items = app.run('catalog.list_items', data={})
 
     assert len(items) == 1
     assert items[0].sku == 'BOLT-001'
-
 
 # ** test: config_driven_app_formats_registered_error_message
 def test_config_driven_app_formats_registered_error_message(config_driven_catalog_path: Path) -> None:
@@ -245,7 +233,7 @@ def test_config_driven_app_formats_registered_error_message(config_driven_catalo
     -- catches a registered error code/message drifting out of sync with the
     inline error codes actually raised in app/events/catalog.py.
     '''
-    app = build_app('catalog_client')
+    app = App('catalog_client')
     app.run('catalog.add_item', data={'sku': 'BOLT-001', 'name': 'Bolt', 'price': 1.50})
 
     with pytest.raises(TiferetError) as exc_info:

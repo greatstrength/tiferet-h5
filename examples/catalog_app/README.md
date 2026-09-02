@@ -11,30 +11,30 @@ A small, runnable application built with `tiferet-h5`, demonstrating the full do
 
 ```
 catalog_app/
-├── catalog_client.py        # Runnable entry point -- build_app('catalog_client') + app.run(...)
+├── catalog_client.py        # Runnable entry point -- App('catalog_client') + app.run(...)
 ├── config.yml                # Consolidated application configuration
 └── app/
     ├── domain/catalog.py     # CatalogItem, CatalogMeta -- read-only domain objects
+    ├── events/catalog.py     # AddCatalogItem, ListCatalogItems, ApplyItemDiscount, RemoveCatalogItem,
+    │                         # SaveCatalogMeta, GetCatalogMeta, VerifyAndCompactCatalog
     ├── interfaces/catalog.py # CatalogItemService, CatalogMetaService -- Service ABCs
     ├── mappers/catalog.py    # CatalogItemTableObject, CatalogMetaNodeObject, CatalogItemAggregate
-    ├── repos/catalog.py      # CatalogItemsRepository, CatalogMetaRepository
-    └── events/catalog.py     # AddCatalogItem, ListCatalogItems, ApplyItemDiscount, RemoveCatalogItem,
-                               # SaveCatalogMeta, GetCatalogMeta, VerifyAndCompactCatalog
+    └── repos/catalog.py      # CatalogItemsRepository, CatalogMetaRepository
 ```
 
 ## Layers
 
 - **Domain** (`app/domain/`): `CatalogItem` and `CatalogMeta` hold only field declarations -- no persistence or serialization concerns.
+- **Events** (`app/events/`): each event is constructor-injected with a service interface and enforces at least one real domain rule via `self.verify(...)` (duplicate SKUs, price/discount/currency bounds, not-found checks) -- not just pass-through field storage.
 - **Interfaces** (`app/interfaces/`): `CatalogItemService`/`CatalogMetaService` are abstract `Service` contracts. Events depend on these interfaces, not on the concrete repository classes.
 - **Mappers** (`app/mappers/`): `CatalogItemTableObject`/`CatalogMetaNodeObject` (row/attribute-oriented HDF5 mappers) and `CatalogItemAggregate` (the mutable counterpart to `CatalogItem`) all inherit their fields from the domain layer rather than redeclaring them -- mirroring core tiferet's `FormulaConfigObject(Formula, TransferObject)` / `FormulaAggregate(Formula, Aggregate)`.
 - **Repos** (`app/repos/`): `CatalogItemsRepository` (`TableRepository` + `H5Repository`) and `CatalogMetaRepository` (`NodeRepository` + `H5Repository`) implement the service interfaces above. See the note in `app/repos/catalog.py` on why the mixin is listed *before* the service interface in each class's bases -- the reverse order would leave the interface's abstract stubs shadowing the mixin's real implementation.
-- **Events** (`app/events/`): each event is constructor-injected with a service interface and enforces at least one real domain rule via `self.verify(...)` (duplicate SKUs, price/discount/currency bounds, not-found checks) -- not just pass-through field storage.
-- **Config** (`config.yml`): declares the `catalog_client` session, the `catalog_item_service`/`catalog_meta_service` repository services, the seven `catalog.*` event services, the `catalog.*` feature workflows (one step each), and the error catalog those events raise into. `tiferet.blueprints.app.build_app` resolves all of it into a single `AppSessionContext`.
+- **Config** (`config.yml`): declares the `catalog_client` session, the `catalog_item_service`/`catalog_meta_service` repository services, the seven `catalog.*` event services, the `catalog.*` feature workflows (one step each), and the error catalog those events raise into. `tiferet.App` (an alias for `tiferet.blueprints.app.build_app`) resolves all of it into a single `AppSessionContext`.
 
 ## What It Demonstrates
 
 - **A full layered architecture**, not just persistence: domain objects, an explicit service-interface layer, and domain events that enforce real business rules on top of those interfaces.
-- **Config-driven invocation**: `catalog_client.py` never constructs a repository or event directly. It calls `build_app('catalog_client')` once, then drives every operation as `app.run(feature_id, data={...})` -- config.yml's DI wiring resolves each feature's event and its service dependency by name.
+- **Config-driven invocation**: `catalog_client.py` never constructs a repository or event directly. It calls `App('catalog_client')` once, then drives every operation as `app.run(feature_id, data={...})` -- config.yml's DI wiring resolves each feature's event and its service dependency by name.
 - **Two-repository composition** (RFP-005): `CatalogItemsRepository` and `CatalogMetaRepository` are two separate repository instances sharing one HDF5 file -- **not** a single class multiply-inheriting both mixins, which would silently collide on `save()`/`get()`/`exists()` under Python's MRO. See [docs/guides/repos.md](../../docs/guides/repos.md) for why.
 - **Repository-level compression default** (RFP-004/RFP-005): `CatalogItemsRepository.filters` is set once; every item written through it is compressed automatically.
 - **The append-only-row pattern**: `ApplyItemDiscount` maps a persisted row onto a mutable `CatalogItemAggregate`, mutates it, then deletes the stale row and saves a fresh one, since HDF5 table rows have no in-place update.
@@ -72,4 +72,4 @@ cd examples/catalog_app
 python -m pytest tests/
 ```
 
-Most tests exercise the events layer directly via `DomainEvent.handle(...)` for fast, isolated unit coverage. Two tests instead call `build_app('catalog_client')` and `app.run(...)`, exercising `config.yml`'s wiring end-to-end (including its error catalog) the same way `catalog_client.py` does.
+Most tests exercise the events layer directly via `DomainEvent.handle(...)` for fast, isolated unit coverage. Two tests instead call `App('catalog_client')` and `app.run(...)`, exercising `config.yml`'s wiring end-to-end (including its error catalog) the same way `catalog_client.py` does.

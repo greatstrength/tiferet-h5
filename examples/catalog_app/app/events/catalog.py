@@ -72,7 +72,6 @@ class AddCatalogItem(DomainEvent):
         # Return the newly saved item.
         return item
 
-
 # ** event: list_catalog_items
 class ListCatalogItems(DomainEvent):
     '''
@@ -107,7 +106,6 @@ class ListCatalogItems(DomainEvent):
 
         # Return every persisted catalog item.
         return self.catalog_item_service.list()
-
 
 # ** event: apply_item_discount
 class ApplyItemDiscount(DomainEvent):
@@ -176,7 +174,6 @@ class ApplyItemDiscount(DomainEvent):
         # Return the discounted aggregate.
         return aggregate
 
-
 # ** event: remove_catalog_item
 class RemoveCatalogItem(DomainEvent):
     '''
@@ -223,7 +220,6 @@ class RemoveCatalogItem(DomainEvent):
         # Remove the item and return the number of rows removed.
         return self.catalog_item_service.delete(f'sku == b"{sku}"')
 
-
 # ** event: verify_and_compact_catalog
 class VerifyAndCompactCatalog(DomainEvent):
     '''
@@ -264,7 +260,6 @@ class VerifyAndCompactCatalog(DomainEvent):
         # Reclaim space freed by any prior deletions.
         with self.catalog_item_service.client() as h5:
             h5.compact()
-
 
 # ** event: save_catalog_meta
 class SaveCatalogMeta(DomainEvent):
@@ -314,7 +309,6 @@ class SaveCatalogMeta(DomainEvent):
 
         # Return the saved metadata.
         return meta
-
 
 # ** event: get_catalog_meta
 class GetCatalogMeta(DomainEvent):

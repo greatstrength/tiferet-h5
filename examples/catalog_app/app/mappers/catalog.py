@@ -33,7 +33,6 @@ class CatalogItemTableObject(CatalogItem, TableObject):
         'price': tables.Float64Col(),
     }
 
-
 # ** mapper: catalog_meta_node_object
 class CatalogMetaNodeObject(CatalogMeta, NodeObject):
     '''
@@ -54,7 +53,6 @@ class CatalogMetaNodeObject(CatalogMeta, NodeObject):
     _ROLES: ClassVar[Dict[str, Dict[str, Any]]] = {
         'to_h5.attrs': {'by_alias': True, 'exclude_none': True},
     }
-
 
 # ** mapper: catalog_item_aggregate
 class CatalogItemAggregate(CatalogItem, Aggregate):

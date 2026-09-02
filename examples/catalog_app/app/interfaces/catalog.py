@@ -95,7 +95,6 @@ class CatalogItemService(Service):
         '''
         raise NotImplementedError('verify method is required for CatalogItemService.')
 
-
 # ** interface: catalog_meta_service
 class CatalogMetaService(Service):
     '''

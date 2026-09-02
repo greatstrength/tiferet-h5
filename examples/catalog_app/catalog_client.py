@@ -7,18 +7,18 @@ core tiferet's calc_client.py: config.yml declares the catalog_client
 session, the two repository services (RFP-005's two-repository composition
 sharing one file, plus RFP-004's repository-level compression default), the
 seven catalog.* event services, the catalog.* feature workflows, and the
-error catalog those events raise into. tiferet.blueprints.app.build_app
-resolves all of it into a single AppSessionContext; every operation below
-is then just app.run(feature_id, data={...}) -- no direct repository or
-event construction here at all.
+error catalog those events raise into. tiferet.App (an alias for
+tiferet.blueprints.app.build_app) resolves all of it into a single
+AppSessionContext; every operation below is then just
+app.run(feature_id, data={...}) -- no direct repository or event
+construction here at all.
 
 Run from this directory with: python catalog_client.py
 """
 
 from pathlib import Path
 
-from tiferet import TiferetError
-from tiferet.blueprints.app import build_app
+from tiferet import App, TiferetError
 
 CATALOG_PATH = Path(__file__).parent / 'catalog.h5'
 
@@ -26,7 +26,7 @@ CATALOG_PATH = Path(__file__).parent / 'catalog.h5'
 if CATALOG_PATH.exists():
     CATALOG_PATH.unlink()
 
-app = build_app('catalog_client')
+app = App('catalog_client')
 
 # Save the catalog's own metadata, then read it back.
 app.run('catalog.save_meta', data={'catalog_name': 'Hardware Catalog', 'currency': 'USD'})
