@@ -4,6 +4,7 @@
 
 # ** core
 import inspect
+import os
 from pathlib import Path
 from typing import Any, ClassVar, Dict
 
@@ -821,3 +822,195 @@ def test_reindex_no_indexed_columns_is_a_noop(h5_with_table: Path) -> None:
     '''
     with H5Client(h5_with_table, mode='a') as h5:
         h5.reindex('/items')  # must not raise
+
+# ** constant: compressible_row_count
+COMPRESSIBLE_ROW_COUNT = 5000
+
+# ** test: create_table_with_filters_is_smaller_on_disk
+def test_create_table_with_filters_is_smaller_on_disk(tmp_path: Path) -> None:
+    '''
+    Test that a table created with a compressing tables.Filters instance is
+    measurably smaller on disk than an equivalent uncompressed table, and
+    that filters is otherwise reachable via **kwargs (backward compatible)
+    but is now also a discoverable, explicit named parameter.
+    '''
+    uncompressed_path = tmp_path / 'uncompressed.h5'
+    compressed_path = tmp_path / 'compressed.h5'
+
+    with H5Client(uncompressed_path, mode='w') as h5:
+        t = h5.create_table('/items', SampleTableObject.get_description())
+        row = t.row
+        for _ in range(COMPRESSIBLE_ROW_COUNT):
+            row['name'] = b'x' * 128
+            row['value'] = 1.0
+            row.append()
+        t.flush()
+
+    with H5Client(compressed_path, mode='w') as h5:
+        t = h5.create_table(
+            '/items',
+            SampleTableObject.get_description(),
+            filters=tables.Filters(complevel=5, complib='zlib'),
+        )
+        row = t.row
+        for _ in range(COMPRESSIBLE_ROW_COUNT):
+            row['name'] = b'x' * 128
+            row['value'] = 1.0
+            row.append()
+        t.flush()
+
+    assert os.path.getsize(compressed_path) < os.path.getsize(uncompressed_path)
+
+# ** test: get_or_create_table_forwards_filters_on_create
+def test_get_or_create_table_forwards_filters_on_create(h5_path: Path) -> None:
+    '''
+    Test that get_or_create_table() forwards filters through to create_table()
+    on the create path.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        t = h5.get_or_create_table(
+            '/items',
+            SampleTableObject.get_description(),
+            filters=tables.Filters(complevel=5, complib='zlib'),
+        )
+
+        assert t.filters.complevel == 5
+
+# ** test: create_array_without_filters_returns_plain_array
+def test_create_array_without_filters_returns_plain_array(h5_path: Path) -> None:
+    '''
+    Test that create_array() without filters preserves the original
+    plain-Array behavior exactly (fully backward compatible).
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        arr = h5.create_array('/data', np.array([1.0, 2.0, 3.0]))
+
+    assert isinstance(arr, tables.Array)
+    assert not isinstance(arr, tables.CArray)
+
+# ** test: create_array_with_filters_is_smaller_on_disk
+def test_create_array_with_filters_is_smaller_on_disk(tmp_path: Path) -> None:
+    '''
+    Test that create_array() with filters creates a compressed CArray that is
+    measurably smaller on disk than an equivalent plain, uncompressed Array,
+    and that the round-tripped data is unchanged.
+    '''
+    data = np.ones((COMPRESSIBLE_ROW_COUNT,), dtype='float64')
+    uncompressed_path = tmp_path / 'array_uncompressed.h5'
+    compressed_path = tmp_path / 'array_compressed.h5'
+
+    with H5Client(uncompressed_path, mode='w') as h5:
+        h5.create_array('/data', data)
+
+    with H5Client(compressed_path, mode='w') as h5:
+        node = h5.create_array('/data', data, filters=tables.Filters(complevel=5, complib='zlib'))
+        assert isinstance(node, tables.CArray)
+
+    assert os.path.getsize(compressed_path) < os.path.getsize(uncompressed_path)
+
+    with H5Client(compressed_path, mode='r') as h5:
+        result = h5.get_array('/data').read()
+
+    assert np.array_equal(result, data)
+
+# ** test: compact_reduces_file_size_after_deletions
+def test_compact_reduces_file_size_after_deletions(tmp_path: Path) -> None:
+    '''
+    Test that compact() measurably shrinks the file after a churn-heavy
+    deletion sequence, and that remaining data survives the rewrite intact.
+
+    A trailing ``/keepalive`` array is written after ``/items`` so the space
+    freed by deleting most of ``/items``' rows is not at the file's tail --
+    a plain HDF5 extent truncation on ``/items`` alone cannot reclaim it,
+    only a full copy-and-rewrite (compact()) can, so the test actually
+    exercises compaction rather than an incidental truncation side effect.
+    '''
+    path = tmp_path / 'churn.h5'
+
+    with H5Client(path, mode='w') as h5:
+        t = h5.create_table('/items', SampleTableObject.get_description())
+        row = t.row
+        for i in range(LARGE_TABLE_ROW_COUNT):
+            row['name'] = f'item{i}'.encode('utf-8')
+            row['value'] = float(i)
+            row.append()
+        t.flush()
+        h5.create_array('/keepalive', np.zeros(10))
+
+    with H5Client(path, mode='a') as h5:
+        h5.remove_rows('/items', 'value < 1900')
+        post_delete_size = os.path.getsize(path)
+
+        h5.compact()
+        post_compact_size = os.path.getsize(path)
+
+        assert post_compact_size < post_delete_size
+
+        rows = h5.read_rows('/items')
+
+    assert len(rows) == 100
+    assert all(r['value'] >= 1900 for r in rows)
+
+# ** test: compact_accepts_filters_to_apply_compression
+def test_compact_accepts_filters_to_apply_compression(h5_with_large_table: Path) -> None:
+    '''
+    Test that compact() applies new compression settings during the rewrite
+    when filters is given, and that the client remains usable afterward.
+    '''
+    with H5Client(h5_with_large_table, mode='a') as h5:
+        h5.compact(filters=tables.Filters(complevel=5, complib='zlib'))
+
+        table = h5.get_table('/items')
+        assert table.filters.complevel == 5
+
+        rows = h5.read_rows('/items')
+
+    assert len(rows) == LARGE_TABLE_ROW_COUNT
+
+# ** test: compact_not_open_raises
+def test_compact_not_open_raises(h5_path: Path) -> None:
+    '''
+    Test that compact() raises H5_CONN_NOT_INITIALIZED when called on a
+    client whose file has not been opened.
+    '''
+    client = H5Client(h5_path, mode='a')
+    with pytest.raises(ServiceError) as exc_info:
+        client.compact()
+
+    assert exc_info.value.error_code == const.H5_CONN_NOT_INITIALIZED_ID
+
+# ** test: compact_copy_failure_raises
+def test_compact_copy_failure_raises(h5_with_table: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    '''
+    Test that compact() raises H5_COMPACT_FAILED, with the original PyTables
+    exception chained as cause, when the underlying copy_children() call fails.
+    '''
+    with H5Client(h5_with_table, mode='a') as h5:
+        def fail_copy(*args, **kwargs):
+            raise tables.HDF5ExtError('boom')
+
+        monkeypatch.setattr(h5.h5file, 'copy_children', fail_copy)
+
+        with pytest.raises(ServiceError) as exc_info:
+            h5.compact()
+
+    assert exc_info.value.error_code == const.H5_COMPACT_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, tables.HDF5ExtError)
+
+# ** test: compact_replace_failure_raises
+def test_compact_replace_failure_raises(h5_with_table: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    '''
+    Test that compact() raises H5_COMPACT_FAILED, with the original OSError
+    chained as cause, when the atomic file replacement fails.
+    '''
+    with H5Client(h5_with_table, mode='a') as h5:
+        def fail_replace(*args, **kwargs):
+            raise OSError('boom')
+
+        monkeypatch.setattr(os, 'replace', fail_replace)
+
+        with pytest.raises(ServiceError) as exc_info:
+            h5.compact()
+
+    assert exc_info.value.error_code == const.H5_COMPACT_FAILED_ID
+    assert isinstance(exc_info.value.__cause__, OSError)
