@@ -4,3 +4,4 @@
 
 # ** app
 from .h5 import H5Repository
+from .mixins import NodeRepository, TableRepository
