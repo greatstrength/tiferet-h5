@@ -1,0 +1,158 @@
+sessions:
+  catalog_client:
+    name: Catalog Client
+    description: A runnable client for the catalog app's item and metadata management.
+
+services:
+  catalog_item_service:
+    module_path: app.repos.catalog
+    class_name: CatalogItemsRepository
+    params:
+      h5_file: catalog.h5
+  catalog_meta_service:
+    module_path: app.repos.catalog
+    class_name: CatalogMetaRepository
+    params:
+      h5_file: catalog.h5
+  add_catalog_item_event:
+    module_path: app.events.catalog
+    class_name: AddCatalogItem
+  list_catalog_items_event:
+    module_path: app.events.catalog
+    class_name: ListCatalogItems
+  apply_item_discount_event:
+    module_path: app.events.catalog
+    class_name: ApplyItemDiscount
+  remove_catalog_item_event:
+    module_path: app.events.catalog
+    class_name: RemoveCatalogItem
+  verify_and_compact_catalog_event:
+    module_path: app.events.catalog
+    class_name: VerifyAndCompactCatalog
+  save_catalog_meta_event:
+    module_path: app.events.catalog
+    class_name: SaveCatalogMeta
+  get_catalog_meta_event:
+    module_path: app.events.catalog
+    class_name: GetCatalogMeta
+
+features:
+  catalog:
+    add_item:
+      name: Add Catalog Item
+      description: Adds a new catalog item.
+      params_schema:
+        sku: str
+        name: str
+        price:
+          type: float
+          required: false
+      steps:
+        - service_id: add_catalog_item_event
+          name: Add the catalog item
+    list_items:
+      name: List Catalog Items
+      description: Lists every catalog item.
+      steps:
+        - service_id: list_catalog_items_event
+          name: List the catalog items
+    apply_discount:
+      name: Apply Item Discount
+      description: Applies a percentage discount to an existing catalog item.
+      params_schema:
+        sku: str
+        percent:
+          type: float
+          required: false
+      steps:
+        - service_id: apply_item_discount_event
+          name: Apply the discount
+    remove_item:
+      name: Remove Catalog Item
+      description: Removes an existing catalog item.
+      params_schema:
+        sku: str
+      steps:
+        - service_id: remove_catalog_item_event
+          name: Remove the catalog item
+    verify_and_compact:
+      name: Verify And Compact Catalog
+      description: Verifies schema integrity and reclaims freed space.
+      steps:
+        - service_id: verify_and_compact_catalog_event
+          name: Verify and compact
+    save_meta:
+      name: Save Catalog Meta
+      description: Saves the catalog's own group-level metadata.
+      params_schema:
+        catalog_name: str
+        currency:
+          type: str
+          required: false
+      steps:
+        - service_id: save_catalog_meta_event
+          name: Save the catalog metadata
+    get_meta:
+      name: Get Catalog Meta
+      description: Retrieves the catalog's own group-level metadata.
+      steps:
+        - service_id: get_catalog_meta_event
+          name: Get the catalog metadata
+
+errors:
+  CATALOG_ITEM_ALREADY_EXISTS:
+    name: Catalog Item Already Exists
+    message:
+      - lang: en_US
+        text: 'A catalog item with sku {sku} already exists.'
+  INVALID_PRICE:
+    name: Invalid Price
+    message:
+      - lang: en_US
+        text: 'Price must be non-negative, got {price}.'
+  CATALOG_ITEM_NOT_FOUND:
+    name: Catalog Item Not Found
+    message:
+      - lang: en_US
+        text: 'No catalog item found with sku {sku}.'
+  INVALID_DISCOUNT_PERCENT:
+    name: Invalid Discount Percent
+    message:
+      - lang: en_US
+        text: 'Discount percent must be between 0 and 100, got {percent}.'
+  INVALID_CURRENCY_CODE:
+    name: Invalid Currency Code
+    message:
+      - lang: en_US
+        text: 'Currency code must be exactly 3 letters, got "{currency}".'
+  CATALOG_META_NOT_FOUND:
+    name: Catalog Meta Not Found
+    message:
+      - lang: en_US
+        text: Catalog metadata has not been saved yet.
+
+logging:
+  formatters:
+    default:
+      name: Default Formatter
+      format: '%(message)s'
+  handlers:
+    default:
+      name: Default Handler
+      module_path: logging
+      class_name: StreamHandler
+      level: CRITICAL
+      formatter: default
+      stream: ext://sys.stderr
+  loggers:
+    root:
+      name: Root Logger
+      level: CRITICAL
+      handlers:
+        - default
+      is_root: true
+    default:
+      name: Default Logger
+      level: CRITICAL
+      handlers:
+        - default

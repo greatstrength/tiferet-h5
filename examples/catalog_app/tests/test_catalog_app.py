@@ -10,6 +10,7 @@ import pytest
 
 # ** app
 from tiferet import TiferetError
+from tiferet.blueprints.app import build_app
 from tiferet.events import DomainEvent
 
 from app.events.catalog import (
@@ -198,3 +199,57 @@ def test_apply_item_discount_rejects_out_of_range_percent(items_repo: CatalogIte
         )
 
     assert exc_info.value.error_code == 'INVALID_DISCOUNT_PERCENT'
+
+
+# ** fixture: config_driven_catalog_path
+@pytest.fixture
+def config_driven_catalog_path() -> Path:
+    '''
+    Return the fixed catalog.h5 path config.yml's h5_file params resolve to
+    (relative to the process cwd, which must be examples/catalog_app for
+    these tests -- see the package README), removing it before and after
+    each test so config-driven runs never leak state between tests or into
+    a manual `python catalog_client.py` run.
+    '''
+    path = Path('catalog.h5')
+    if path.exists():
+        path.unlink()
+    yield path
+    if path.exists():
+        path.unlink()
+
+
+# ** test: config_driven_app_runs_add_item_and_list_items_features
+def test_config_driven_app_runs_add_item_and_list_items_features(config_driven_catalog_path: Path) -> None:
+    '''
+    Test that config.yml's sessions/services/features wiring resolves
+    correctly through tiferet.blueprints.app.build_app -- catches config.yml
+    typos (module_path/class_name/service_id mismatches) that the
+    DomainEvent.handle()-based tests above cannot, since those construct
+    events directly rather than resolving them through the DI container.
+    '''
+    app = build_app('catalog_client')
+
+    app.run('catalog.add_item', data={'sku': 'BOLT-001', 'name': 'Bolt', 'price': 1.50})
+    items = app.run('catalog.list_items', data={})
+
+    assert len(items) == 1
+    assert items[0].sku == 'BOLT-001'
+
+
+# ** test: config_driven_app_formats_registered_error_message
+def test_config_driven_app_formats_registered_error_message(config_driven_catalog_path: Path) -> None:
+    '''
+    Test that a domain rule violation raised by an event resolves against
+    config.yml's error catalog and is re-raised as a formatted TiferetAPIError
+    -- catches a registered error code/message drifting out of sync with the
+    inline error codes actually raised in app/events/catalog.py.
+    '''
+    app = build_app('catalog_client')
+    app.run('catalog.add_item', data={'sku': 'BOLT-001', 'name': 'Bolt', 'price': 1.50})
+
+    with pytest.raises(TiferetError) as exc_info:
+        app.run('catalog.add_item', data={'sku': 'BOLT-001', 'name': 'Bolt (dup)', 'price': 1.50})
+
+    assert exc_info.value.error_code == 'CATALOG_ITEM_ALREADY_EXISTS'
+    assert exc_info.value.message == 'A catalog item with sku BOLT-001 already exists.'
