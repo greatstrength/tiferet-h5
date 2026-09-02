@@ -4,7 +4,7 @@
 
 # ** core
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 # ** app
 from tiferet.interfaces import FileService
@@ -232,6 +232,97 @@ class H5Service(FileService):
         :type kwargs: dict
         :return: Matching rows as a list of dicts with Python-native values.
         :rtype: List[Dict[str, Any]]
+        '''
+        raise NotImplementedError()
+
+    # * method: iter_rows
+    @abstractmethod
+    def iter_rows(self,
+            path: str,
+            start: Optional[int] = None,
+            stop: Optional[int] = None,
+            condition: Optional[str] = None,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Lazily stream rows from the table at ``path``, optionally filtered or
+        sliced, without materializing the full result set in memory.
+
+        :param path: Absolute HDF5 path for the source table.
+        :type path: str
+        :param start: Optional start row index (inclusive).
+        :type start: Optional[int]
+        :param stop: Optional stop row index (exclusive).
+        :type stop: Optional[int]
+        :param condition: Optional PyTables condition string.
+        :type condition: Optional[str]
+        :return: A generator of dicts with Python-native values.
+        :rtype: Iterator[Dict[str, Any]]
+        '''
+        raise NotImplementedError()
+
+    # * method: iter_query
+    @abstractmethod
+    def iter_query(self,
+            path: str,
+            condition: str,
+            **kwargs,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Lazily stream rows matching an in-kernel PyTables condition query.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param condition: PyTables condition string.
+        :type condition: str
+        :param kwargs: Additional kwargs forwarded to ``table.where``.
+        :type kwargs: dict
+        :return: A generator of matching rows as dicts with Python-native values.
+        :rtype: Iterator[Dict[str, Any]]
+        '''
+        raise NotImplementedError()
+
+    # * method: create_index
+    @abstractmethod
+    def create_index(self, path: str, column: str, **kwargs) -> None:
+        '''
+        Create a fully sorted (CSI) index on ``column`` of the table at ``path``.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of the column to index.
+        :type column: str
+        :param kwargs: Additional kwargs forwarded to the underlying index builder.
+        :type kwargs: dict
+        '''
+        raise NotImplementedError()
+
+    # * method: is_indexed
+    @abstractmethod
+    def is_indexed(self, path: str, column: str) -> bool:
+        '''
+        Check whether ``column`` of the table at ``path`` currently has an index.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of the column to check.
+        :type column: str
+        :return: True if the column is indexed, otherwise False.
+        :rtype: bool
+        '''
+        raise NotImplementedError()
+
+    # * method: reindex
+    @abstractmethod
+    def reindex(self, path: str, column: Optional[str] = None) -> None:
+        '''
+        Recompute an existing index (or every existing index on the table)
+        after a batch of writes has invalidated it.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of a single column to re-index. When omitted,
+            every currently indexed column on the table is re-indexed.
+        :type column: Optional[str]
         '''
         raise NotImplementedError()
 

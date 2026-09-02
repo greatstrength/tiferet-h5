@@ -4,7 +4,7 @@
 
 # ** core
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 # ** infra
 import tables
@@ -51,6 +51,9 @@ H5_WRITE_FAILED_ID = 'H5_WRITE_FAILED'
 # ** constant: h5_schema_mismatch_id
 H5_SCHEMA_MISMATCH_ID = 'H5_SCHEMA_MISMATCH'
 
+# ** constant: h5_index_failed_id
+H5_INDEX_FAILED_ID = 'H5_INDEX_FAILED'
+
 # *** constants (messages)
 
 # ** constant: h5_conn_not_initialized_message
@@ -66,6 +69,38 @@ VALID_H5_MODES = (
     'w-',
     'a',
 )
+
+# *** functions
+
+# ** function: normalize_row
+def normalize_row(table: Any, record: Any) -> Dict[str, Any]:
+    '''
+    Normalize a single PyTables record (a ``tables.Row`` instance or a
+    NumPy structured record, both of which support column-name item
+    access) into a plain Python dict.
+
+    Shared by ``H5Client.read_rows`` (eager, list-returning) and
+    ``H5Client.iter_rows`` (lazy, generator-returning) so both normalize
+    identically.
+
+    :param table: The source PyTables table (for ``colnames``).
+    :type table: Any
+    :param record: A single row record.
+    :type record: Any
+    :return: A dict mapping column names to Python-native values.
+    :rtype: Dict[str, Any]
+    '''
+
+    # Decode bytes and convert numpy scalars to Python natives per column.
+    row_dict = {}
+    for col in table.colnames:
+        val = record[col]
+        if isinstance(val, bytes):
+            val = val.decode('utf-8')
+        elif hasattr(val, 'item'):
+            val = val.item()
+        row_dict[col] = val
+    return row_dict
 
 # *** utils
 
@@ -649,17 +684,7 @@ class H5Client(FileLoader, H5Service):
                 records = table.read(start=start, stop=stop)
 
             # Normalize each record into a plain Python dict.
-            result = []
-            for record in records:
-                row_dict = {}
-                for col in table.colnames:
-                    val = record[col]
-                    if isinstance(val, bytes):
-                        val = val.decode('utf-8')
-                    elif hasattr(val, 'item'):
-                        val = val.item()
-                    row_dict[col] = val
-                result.append(row_dict)
+            result = [normalize_row(table, record) for record in records]
 
             # Return the list of normalized dicts.
             return result
@@ -708,6 +733,133 @@ class H5Client(FileLoader, H5Service):
 
         # Delegate to read_rows with the condition applied.
         return self.read_rows(path, condition=condition)
+
+    # * method: iter_rows
+    def iter_rows(self,
+            path: str,
+            start: Optional[int] = None,
+            stop: Optional[int] = None,
+            condition: Optional[str] = None,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Lazily stream rows from the table at ``path`` one at a time, without
+        materializing the full result set in memory.
+
+        Wraps ``table.iterrows()`` (unconditioned) or ``table.where()``
+        (conditioned) -- both are true PyTables generators that read
+        chunk-by-chunk from disk, unlike ``read_rows()``'s ``table.read()`` /
+        ``table.read_where()``, which build a full in-memory result array
+        up front. Node resolution and condition compilation happen eagerly
+        (before this method returns) so failures surface immediately rather
+        than on first iteration; per-row normalization happens lazily.
+
+        :param path: Absolute HDF5 path for the source table.
+        :type path: str
+        :param start: Optional start row index (inclusive).
+        :type start: Optional[int]
+        :param stop: Optional stop row index (exclusive).
+        :type stop: Optional[int]
+        :param condition: Optional PyTables condition string.
+        :type condition: Optional[str]
+        :return: A generator of dicts with Python-native values.
+        :rtype: Iterator[Dict[str, Any]]
+        :raises ServiceError: If the file is not open, the node is absent,
+            or the condition string is invalid.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
+
+        try:
+
+            # Retrieve the target table and build the lazy row iterator.
+            table = self.h5file.get_node(path)
+            iterator = table.where(condition, start=start, stop=stop) if condition \
+                else table.iterrows(start=start, stop=stop)
+
+        except tables.NoSuchNodeError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        except (SyntaxError, NameError, tables.HDF5ExtError) as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_QUERY_FAILED_ID,
+                f'Failed to query table at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+            )
+
+        # Delegate the lazy per-row normalization to a generator helper, so
+        # the eager validation above still raises synchronously.
+        return self._stream_rows(table, iterator, path)
+
+    # * method: _stream_rows
+    def _stream_rows(self, table: Any, iterator: Any, path: str) -> Iterator[Dict[str, Any]]:
+        '''
+        Yield normalized row dicts from a PyTables row iterator, wrapping any
+        error that only manifests mid-iteration as a structured ``ServiceError``.
+
+        :param table: The source PyTables table (for ``colnames``).
+        :type table: Any
+        :param iterator: A ``table.iterrows()`` or ``table.where()`` iterator.
+        :type iterator: Any
+        :param path: Absolute HDF5 path for the source table (for error context).
+        :type path: str
+        :return: A generator of dicts with Python-native values.
+        :rtype: Iterator[Dict[str, Any]]
+        :raises ServiceError: If a query error occurs during iteration.
+        '''
+
+        try:
+
+            # Normalize and yield each row one at a time.
+            for record in iterator:
+                yield normalize_row(table, record)
+
+        except (SyntaxError, NameError, tables.HDF5ExtError) as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_QUERY_FAILED_ID,
+                f'Failed to query table at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+            )
+
+    # * method: iter_query
+    def iter_query(self,
+            path: str,
+            condition: str,
+            **kwargs,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Lazily stream rows matching an in-kernel PyTables condition query.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param condition: PyTables condition string.
+        :type condition: str
+        :param kwargs: Additional kwargs (reserved for future use).
+        :type kwargs: dict
+        :return: A generator of matching rows as dicts with Python-native values.
+        :rtype: Iterator[Dict[str, Any]]
+        :raises ServiceError: If the file is not open, the node is absent,
+            or the condition string is invalid.
+        '''
+
+        # Delegate to iter_rows with the condition applied.
+        return self.iter_rows(path, condition=condition)
 
     # * method: remove_rows
     def remove_rows(self, path: str, condition: str) -> int:
@@ -768,6 +920,227 @@ class H5Client(FileLoader, H5Service):
                 original_error=str(e),
                 path=path,
             )
+
+    # * method: create_index
+    def create_index(self, path: str, column: str, **kwargs) -> None:
+        '''
+        Create a fully sorted (CSI) index on ``column`` of the table at ``path``,
+        so condition-based ``query``/``read_rows``/``remove_rows`` calls against
+        it are resolved by index lookup rather than a full-table scan.
+
+        Index use by those methods is inherited PyTables condition-evaluator
+        behavior once an index exists -- ``create_index`` has no other API
+        surface to opt into it.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of the column to index.
+        :type column: str
+        :param kwargs: Additional kwargs forwarded to ``Column.create_csindex``.
+        :type kwargs: dict
+        :raises ServiceError: If the file is not open, the node or column is
+            absent, or the column is already indexed.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
+
+        try:
+
+            # Retrieve the target table and column accessor.
+            table = self.h5file.get_node(path)
+            col = getattr(table.cols, column)
+
+        except tables.NoSuchNodeError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        except AttributeError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_INDEX_FAILED_ID,
+                f'Column "{column}" not found on table at {path}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+                column=column,
+            )
+
+        try:
+
+            # Create the fully sorted index.
+            col.create_csindex(**kwargs)
+
+        except (ValueError, tables.HDF5ExtError) as e:
+
+            # Raised e.g. when the column is already indexed (PyTables'
+            # own message points the caller at reindex() in that case).
+            ServiceError.raise_for(
+                self,
+                H5_INDEX_FAILED_ID,
+                f'Failed to create index on column "{column}" at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+                column=column,
+            )
+
+    # * method: is_indexed
+    def is_indexed(self, path: str, column: str) -> bool:
+        '''
+        Check whether ``column`` of the table at ``path`` currently has an index.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of the column to check.
+        :type column: str
+        :return: True if the column is indexed, otherwise False.
+        :rtype: bool
+        :raises ServiceError: If the file is not open or the node or column is absent.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
+
+        try:
+
+            # Retrieve the target table and column accessor.
+            table = self.h5file.get_node(path)
+            col = getattr(table.cols, column)
+
+        except tables.NoSuchNodeError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        except AttributeError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_INDEX_FAILED_ID,
+                f'Column "{column}" not found on table at {path}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+                column=column,
+            )
+
+        # Return the column's indexed state.
+        return bool(col.is_indexed)
+
+    # * method: reindex
+    def reindex(self, path: str, column: Optional[str] = None) -> None:
+        '''
+        Recompute an existing index (or every existing index on the table)
+        after a batch of writes has invalidated it.
+
+        Re-indexing is always an explicit caller responsibility -- it is
+        never invoked automatically by ``append_rows`` or ``flush``, since
+        that would add unconditional cost to every write regardless of
+        whether the table has any indexed columns at all.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of a single column to re-index. When omitted,
+            every currently indexed column on the table is re-indexed.
+        :type column: Optional[str]
+        :raises ServiceError: If the file is not open, the node or column is
+            absent, or ``column`` is given but is not currently indexed.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(self, H5_CONN_NOT_INITIALIZED_ID, H5_CONN_NOT_INITIALIZED_MESSAGE)
+
+        try:
+
+            # Retrieve the target table.
+            table = self.h5file.get_node(path)
+
+        except tables.NoSuchNodeError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        # Re-index a single named column.
+        if column is not None:
+            try:
+                col = getattr(table.cols, column)
+
+            except AttributeError as e:
+
+                ServiceError.raise_for(
+                    self,
+                    H5_INDEX_FAILED_ID,
+                    f'Column "{column}" not found on table at {path}.',
+                    cause=e,
+                    original_error=str(e),
+                    path=path,
+                    column=column,
+                )
+
+            # PyTables' own Column.reindex() silently no-ops on a column
+            # that was never indexed rather than raising -- fail loudly here
+            # instead, so a caller typo or bad assumption is not masked.
+            if not col.is_indexed:
+                ServiceError.raise_for(
+                    self,
+                    H5_INDEX_FAILED_ID,
+                    f'Column "{column}" at {path} is not indexed; call create_index() first.',
+                    path=path,
+                    column=column,
+                )
+
+            try:
+                col.reindex()
+
+            except (ValueError, tables.HDF5ExtError) as e:
+
+                ServiceError.raise_for(
+                    self,
+                    H5_INDEX_FAILED_ID,
+                    f'Failed to reindex column "{column}" at {path}: {e}.',
+                    cause=e,
+                    original_error=str(e),
+                    path=path,
+                    column=column,
+                )
+
+        # No column given: re-index every currently indexed column.
+        else:
+            try:
+                for indexed_name in table.indexedcolpathnames:
+                    getattr(table.cols, indexed_name).reindex()
+
+            except (ValueError, tables.HDF5ExtError) as e:
+
+                ServiceError.raise_for(
+                    self,
+                    H5_INDEX_FAILED_ID,
+                    f'Failed to reindex table at {path}: {e}.',
+                    cause=e,
+                    original_error=str(e),
+                    path=path,
+                )
 
     # * method: create_array
     def create_array(self,
