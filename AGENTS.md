@@ -7,7 +7,7 @@
 - **Repository:** https://github.com/greatstrength/tiferet-h5
 - **Branch:** `v1.x-proto`
 - **Python:** ≥ 3.10
-- **Version:** `1.0.0a7`
+- **Version:** `1.0.0a8`
 - **Dependencies:** `tiferet >= 2.0.3, < 2.1`, `tables >= 3.10.0`
 
 ## Architecture
