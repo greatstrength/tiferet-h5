@@ -17,6 +17,7 @@ from tiferet.domain import DomainObject
 from tiferet.mappers import Aggregate
 
 from ..settings import NodeObject, TableObject
+from .settings import NodeObjectTestBase, TableObjectTestBase
 
 # *** constants
 
@@ -90,6 +91,17 @@ class ItemDomain(DomainObject):
     score: float = Field(default=0.0, description='Item score.')
 
 
+# ** class: meta_aggregate
+class MetaAggregate(Aggregate):
+    '''Minimal Aggregate for MetaNodeObject map()/from_model() testing.'''
+
+    # * attribute: name
+    name: str = Field(default='', description='Name.')
+
+    # * attribute: description
+    description: str = Field(default='', description='Description.')
+
+
 # ** class: meta_node_object
 class MetaNodeObject(NodeObject):
     '''NodeObject subclass with aliased field for testing.'''
@@ -141,6 +153,53 @@ def aliased_h5_table(tmp_path: Path):
 
 
 # *** tests
+
+# ** test: TestItemTableObject
+class TestItemTableObject(TableObjectTestBase):
+    '''
+    Harness-driven tests for ItemTableObject.
+    '''
+
+    # * attribute: table_cls
+    table_cls = ItemTableObject
+
+    # * attribute: aggregate_cls
+    aggregate_cls = ItemAggregate
+
+    # * attribute: domain_cls
+    domain_cls = ItemDomain
+
+    # * attribute: sample_data
+    sample_data = {'name': SAMPLE_NAME, 'score': SAMPLE_SCORE}
+
+    # * attribute: aggregate_sample_data
+    aggregate_sample_data = {'name': SAMPLE_NAME, 'score': SAMPLE_SCORE}
+
+    # * attribute: equality_fields
+    equality_fields = ['name', 'score']
+
+
+# ** test: TestMetaNodeObject
+class TestMetaNodeObject(NodeObjectTestBase):
+    '''
+    Harness-driven tests for MetaNodeObject.
+    '''
+
+    # * attribute: node_cls
+    node_cls = MetaNodeObject
+
+    # * attribute: aggregate_cls
+    aggregate_cls = MetaAggregate
+
+    # * attribute: sample_data
+    sample_data = {'name': 'Calculator', 'description': 'Arithmetic ops'}
+
+    # * attribute: aggregate_sample_data
+    aggregate_sample_data = {'name': 'Calculator', 'description': 'Arithmetic ops'}
+
+    # * attribute: equality_fields
+    equality_fields = ['name', 'description']
+
 
 # ** test: get_description_auto_generates
 def test_get_description_auto_generates() -> None:
@@ -257,24 +316,6 @@ def test_encode_value_none_numeric_col() -> None:
     assert result == 0
 
 
-# ** test: to_row_from_row_round_trip
-def test_to_row_from_row_round_trip(h5_table) -> None:
-    '''
-    Test that to_row() followed by from_row() preserves field values.
-    '''
-    obj = ItemTableObject(name=SAMPLE_NAME, score=SAMPLE_SCORE)
-    obj.to_row(h5_table)
-    h5_table.flush()
-
-    rows = list(h5_table.iterrows())
-    assert len(rows) == 1
-
-    restored = ItemTableObject.from_row(rows[0])
-
-    assert restored.name == SAMPLE_NAME
-    assert abs(restored.score - SAMPLE_SCORE) < 1e-9
-
-
 # ** test: to_row_alias_applied_to_column
 def test_to_row_alias_applied_to_column(aliased_h5_table) -> None:
     '''
@@ -302,54 +343,6 @@ def test_from_row_resolves_alias(aliased_h5_table) -> None:
     assert restored.group_id == 'calc'
     assert restored.label == 'add'
 
-
-# ** test: to_primitive_uses_canonical_names
-def test_to_primitive_uses_canonical_names() -> None:
-    '''
-    Test that to_primitive() returns canonical field names (not aliases).
-    '''
-    obj = ItemTableObject(name=SAMPLE_NAME, score=SAMPLE_SCORE)
-    data = obj.to_primitive()
-
-    assert 'name' in data
-    assert 'score' in data
-    assert data['name'] == SAMPLE_NAME
-
-
-# ** test: map_produces_aggregate
-def test_map_produces_aggregate() -> None:
-    '''
-    Test that map() constructs the target Aggregate with matching field values.
-    '''
-    obj = ItemTableObject(name=SAMPLE_NAME, score=SAMPLE_SCORE)
-    agg = obj.map(ItemAggregate)
-
-    assert isinstance(agg, ItemAggregate)
-    assert agg.name == SAMPLE_NAME
-    assert abs(agg.score - SAMPLE_SCORE) < 1e-9
-
-
-# ** test: from_model_creates_table_object
-def test_from_model_creates_table_object() -> None:
-    '''
-    Test that from_model() creates a TableObject from a DomainObject.
-    '''
-    domain_obj = ItemDomain(name=SAMPLE_NAME, score=SAMPLE_SCORE)
-    table_obj = ItemTableObject.from_model(domain_obj)
-
-    assert isinstance(table_obj, ItemTableObject)
-    assert table_obj.name == SAMPLE_NAME
-    assert abs(table_obj.score - SAMPLE_SCORE) < 1e-9
-
-
-# ** test: verify_schema_pass
-def test_verify_schema_pass(h5_table) -> None:
-    '''
-    Test that verify_schema() returns an empty list when columns match.
-    '''
-    mismatches = ItemTableObject.verify_schema(h5_table)
-
-    assert mismatches == []
 
 # ** test: verify_schema_missing_column
 def test_verify_schema_missing_column(h5_table) -> None:
@@ -494,30 +487,6 @@ def test_node_object_from_attrs_resolves_alias() -> None:
     assert obj.name == 'Calculator'
     assert obj.description == 'Arithmetic ops'
 
-
-# ** test: node_object_from_attrs_decodes_bytes
-def test_node_object_from_attrs_decodes_bytes() -> None:
-    '''
-    Test that NodeObject.from_attrs() decodes bytes values to str.
-    '''
-    raw = {'name': b'Calculator', 'desc': b'Arithmetic ops'}
-    obj = MetaNodeObject.from_attrs(raw)
-
-    assert obj.name == 'Calculator'
-    assert obj.description == 'Arithmetic ops'
-
-
-# ** test: node_object_round_trip
-def test_node_object_round_trip() -> None:
-    '''
-    Test that to_attrs() followed by from_attrs() preserves all field values.
-    '''
-    original = MetaNodeObject(name='Calculator', description='Arithmetic ops')
-    attrs = original.to_attrs()
-    restored = MetaNodeObject.from_attrs(attrs)
-
-    assert restored.name == original.name
-    assert restored.description == original.description
 
 # ** test: node_object_coerces_numeric_str_field
 def test_node_object_coerces_numeric_str_field() -> None:
