@@ -10,6 +10,10 @@ HDF5 infrastructure extension for the [Tiferet](https://github.com/greatstrength
 - `tiferet >= 2.0.3, < 2.1`
 - `tables >= 3.10.0` (PyTables)
 
+## Async Usage
+
+`tiferet-h5` is sync-only by design and does not ship an async wrapper around core Tiferet's `AsyncFeatureContext` -- deliberately, not by oversight. A naive `asyncio.to_thread` wrapper would reintroduce the exact concurrent-access hazard the [Concurrency guide](docs/guides/utils/h5.md#concurrency) documents as unsafe, and this package isn't yet confident enough in core's own async design to couple its API to it. If you need async interoperability, build it yourself around Tiferet's own async components -- wrap an individual short-lived operation in your own `asyncio.to_thread(...)` at the call site, and never hold one open `H5Client` instance across multiple concurrently-scheduled async tasks. See [Async Usage](docs/guides/utils/h5.md#async-usage) in the H5Client guide for the full rationale and pattern.
+
 ## Installation
 
 ```bash
