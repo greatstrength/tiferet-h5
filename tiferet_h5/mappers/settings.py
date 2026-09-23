@@ -14,6 +14,274 @@ from pydantic import ConfigDict
 from tiferet.domain import DomainObject
 from tiferet.mappers import Aggregate, TransferObject
 
+# *** functions
+
+# ** function: field_alias_names
+def field_alias_names(field_info: Any) -> List[str]:
+    '''
+    Collect HDF5-facing alias names declared on a Pydantic field.
+
+    Includes ``serialization_alias``, ``alias``, and string members of
+    ``validation_alias`` so a stored column or attribute key can be matched
+    back to the canonical Python field name. Callers of ``_NULLABLE_FIELDS``
+    list canonical names; this lookup is how those names meet aliased storage.
+
+    :param field_info: The Pydantic field metadata.
+    :type field_info: Any
+    :return: Alias names, excluding the canonical field name.
+    :rtype: List[str]
+    '''
+
+    # Start with the aliases used when serializing by alias.
+    names: List[str] = []
+    serialization_alias = getattr(field_info, 'serialization_alias', None)
+    alias = getattr(field_info, 'alias', None)
+    for candidate in (serialization_alias, alias):
+        if isinstance(candidate, str) and candidate not in names:
+            names.append(candidate)
+
+    # Include string validation aliases so read keys resolve too.
+    validation_alias = getattr(field_info, 'validation_alias', None)
+    if isinstance(validation_alias, str):
+        choices = [validation_alias]
+    else:
+        choices = list(getattr(validation_alias, 'choices', []) or [])
+    for choice in choices:
+        if isinstance(choice, str) and choice not in names:
+            names.append(choice)
+
+    # Return the collected alias names.
+    return names
+
+# ** function: nullable_field_index
+def nullable_field_index(model_cls: Type) -> Dict[str, str]:
+    '''
+    Map storage and canonical keys to canonical ``_NULLABLE_FIELDS`` names.
+
+    Keys are the Python field name plus any declared alias. Values are always
+    the canonical field name. Unknown names are skipped so an undeclared key
+    is never rewritten.
+
+    :param model_cls: The mapper class declaring ``_NULLABLE_FIELDS``.
+    :type model_cls: Type
+    :return: A key-to-field-name index. Empty when nothing is nullable.
+    :rtype: Dict[str, str]
+    '''
+
+    # Skip the lookup entirely when the class opts out.
+    index: Dict[str, str] = {}
+    nullable_fields = getattr(model_cls, '_NULLABLE_FIELDS', [])
+    if not nullable_fields:
+        return index
+
+    # Index each declared field under its canonical name and aliases.
+    model_fields = getattr(model_cls, 'model_fields', {})
+    for field_name in nullable_fields:
+        field_info = model_fields.get(field_name)
+        if field_info is None:
+            continue
+        index[field_name] = field_name
+        for alias in field_alias_names(field_info):
+            index[alias] = field_name
+
+    # Return the completed index.
+    return index
+
+# ** function: restore_null_sentinels
+def restore_null_sentinels(model_cls: Type, data: Dict[str, Any]) -> Dict[str, Any]:
+    '''
+    Restore ``None`` for declared nullable fields whose stored value is empty.
+
+    Applied after decode, before ``model_validate``. Only exact empty-string
+    sentinels (``''`` or ``b''``) on keys that belong to ``_NULLABLE_FIELDS``
+    are rewritten. Undeclared fields, including a genuine ``''``, are left
+    unchanged. For a declared field, stored ``None`` and stored ``''`` are the
+    same HDF5 value, so both read back as ``None``.
+
+    :param model_cls: The mapper class declaring ``_NULLABLE_FIELDS``.
+    :type model_cls: Type
+    :param data: Decoded storage data, keyed by column or attribute name.
+    :type data: Dict[str, Any]
+    :return: The same dict, with declared empty sentinels restored to ``None``.
+    :rtype: Dict[str, Any]
+    '''
+
+    # Nothing to restore when the class declares no nullable fields.
+    index = nullable_field_index(model_cls)
+    if not index:
+        return data
+
+    # Rewrite only declared keys whose value is the empty-string sentinel.
+    for key, value in list(data.items()):
+        if key not in index:
+            continue
+        if value == '' or value == b'':
+            data[key] = None
+
+    # Return the data for the caller to validate.
+    return data
+
+# ** function: serialization_name
+def serialization_name(model_cls: Type, field_name: str, by_alias: bool) -> str:
+    '''
+    Return the key used for a field when serializing.
+
+    :param model_cls: The mapper class that owns the field.
+    :type model_cls: Type
+    :param field_name: The canonical Python field name.
+    :type field_name: str
+    :param by_alias: Whether serialization aliases should be applied.
+    :type by_alias: bool
+    :return: The alias when ``by_alias`` is set and one exists; otherwise the field name.
+    :rtype: str
+    '''
+
+    # Canonical names are the mapping-path keys.
+    if not by_alias:
+        return field_name
+
+    # Prefer the serialization alias, matching model_dump(by_alias=True).
+    field_info = model_cls.model_fields.get(field_name)
+    if field_info is None:
+        return field_name
+    alias = field_info.serialization_alias or field_info.alias
+    if isinstance(alias, str) and alias:
+        return alias
+
+    # Fall back to the canonical name when no alias is declared.
+    return field_name
+
+# ** function: omitted_field_names
+def omitted_field_names(model_cls: Type, dump_kwargs: Dict[str, Any]) -> set:
+    '''
+    Return canonical field names that a ``model_dump`` call explicitly leaves out.
+
+    ``exclude_none`` is ignored here: declared nullable ``None`` values are
+    preserved even when that flag is set. An explicit ``exclude``, or an
+    ``include`` that does not name the field, is honored.
+
+    :param model_cls: The mapper class whose fields may be omitted.
+    :type model_cls: Type
+    :param dump_kwargs: Keyword arguments forwarded to ``model_dump``.
+    :type dump_kwargs: Dict[str, Any]
+    :return: Canonical field names that must stay absent.
+    :rtype: set
+    '''
+
+    # Honor a set- or dict-style exclude.
+    omitted = set()
+    exclude = dump_kwargs.get('exclude')
+    if isinstance(exclude, dict):
+        omitted.update(
+            name for name, flag in exclude.items() if flag and isinstance(name, str)
+        )
+    elif isinstance(exclude, (set, list, tuple, frozenset)):
+        omitted.update(name for name in exclude if isinstance(name, str))
+
+    # An include list omits every model field it does not name.
+    include = dump_kwargs.get('include')
+    if include is None:
+        return omitted
+    if isinstance(include, dict):
+        included = {
+            name for name, flag in include.items() if flag and isinstance(name, str)
+        }
+    elif isinstance(include, (set, list, tuple, frozenset)):
+        included = {name for name in include if isinstance(name, str)}
+    else:
+        return omitted
+
+    # Treat every field outside include as omitted.
+    for field_name in model_cls.model_fields:
+        if field_name not in included:
+            omitted.add(field_name)
+
+    # Return the names that must not be reinserted.
+    return omitted
+
+# ** function: preserve_nullable_nones
+def preserve_nullable_nones(
+    model_cls: Type,
+    data: Dict[str, Any],
+    source: Any,
+    *,
+    by_alias: bool = False,
+    omitted: Optional[set] = None,
+) -> Dict[str, Any]:
+    '''
+    Reinsert ``None`` for declared nullable fields dropped by ``exclude_none``.
+
+    Does not convert a genuine empty string. A field that is not ``None`` on
+    ``source``, or that was explicitly omitted, is left alone. This is the
+    mapping-path hook: ``from_model``, ``to_primitive``, and ``map`` keep
+    Python ``None`` instead of letting a string default replace it.
+
+    :param model_cls: The mapper class declaring ``_NULLABLE_FIELDS``.
+    :type model_cls: Type
+    :param data: The serialized dict to update.
+    :type data: Dict[str, Any]
+    :param source: The model whose field values are authoritative.
+    :type source: Any
+    :param by_alias: Whether to write serialization-alias keys.
+    :type by_alias: bool
+    :param omitted: Canonical field names that must stay absent.
+    :type omitted: Optional[set]
+    :return: The same dict, with declared ``None`` values preserved.
+    :rtype: Dict[str, Any]
+    '''
+
+    # Nothing to preserve when the class declares no nullable fields.
+    nullable_fields = getattr(model_cls, '_NULLABLE_FIELDS', [])
+    if not nullable_fields:
+        return data
+
+    # Reinsert None only for declared fields that are actually None on source.
+    source_fields = getattr(type(source), 'model_fields', None)
+    skipped = omitted or set()
+    for field_name in nullable_fields:
+        if field_name in skipped:
+            continue
+        if field_name not in getattr(model_cls, 'model_fields', {}):
+            continue
+        if source_fields is not None and field_name not in source_fields:
+            continue
+        if getattr(source, field_name, None) is not None:
+            continue
+        data[serialization_name(model_cls, field_name, by_alias)] = None
+
+    # Return the dict with declared Nones restored.
+    return data
+
+# ** function: apply_attr_null_sentinels
+def apply_attr_null_sentinels(model_cls: Type, data: Dict[str, Any]) -> Dict[str, Any]:
+    '''
+    Replace preserved ``None`` values with the empty-string attribute sentinel.
+
+    ``to_attrs`` must emit ``''`` for declared nullable fields rather than
+    dropping those keys via ``exclude_none``. Keys already written under an
+    alias are converted in place. Undeclared ``None`` values are not rewritten.
+
+    :param model_cls: The mapper class declaring ``_NULLABLE_FIELDS``.
+    :type model_cls: Type
+    :param data: Attribute dict produced by ``to_primitive``.
+    :type data: Dict[str, Any]
+    :return: The same dict, with declared ``None`` values stored as ``''``.
+    :rtype: Dict[str, Any]
+    '''
+
+    # Nothing to emit when the class declares no nullable fields.
+    index = nullable_field_index(model_cls)
+    if not index:
+        return data
+
+    # Convert declared Nones in place; leave every other value alone.
+    for key, value in list(data.items()):
+        if key in index and value is None:
+            data[key] = ''
+
+    # Return the attribute dict ready for node storage.
+    return data
+
 # *** classes
 
 # ** class: table_object
@@ -33,6 +301,12 @@ class TableObject(DomainObject):
       auto-generate the ``IsDescription`` class when ``_DESCRIPTION`` is ``None``.
     * ``_DESCRIPTION`` -- an optional explicit ``tables.IsDescription`` subclass.
       When set, ``_H5_TYPES`` is ignored for schema generation.
+    * ``_NULLABLE_FIELDS`` -- canonical Python field names whose ``None``
+      values round-trip through the empty-string sentinel.  The default empty
+      list keeps today's behavior, including a stored ``''`` that stays
+      ``''``.  HDF5 column names are never listed here; alias resolution is
+      separate.  For a declared field, stored ``None`` and stored ``''`` are
+      the same value and both read back as ``None``.
 
     Key methods mirror ``TransferObject``:
 
@@ -62,6 +336,9 @@ class TableObject(DomainObject):
 
     # * attribute: _DESCRIPTION
     _DESCRIPTION: ClassVar[Optional[type]] = None
+
+    # * attribute: _NULLABLE_FIELDS
+    _NULLABLE_FIELDS: ClassVar[List[str]] = []
 
     # * method: get_description (static)
     @classmethod
@@ -169,8 +446,10 @@ class TableObject(DomainObject):
         ``serialization_alias`` values are used as HDF5 column name keys.  This
         means ``_H5_TYPES`` keys should match the *alias* (HDF5 column name),
         not necessarily the Python field name.  ``None`` values are replaced with
-        type-appropriate defaults.  Callers should invoke ``table.flush()`` when
-        the write sequence is complete.
+        type-appropriate defaults.  A field listed in ``_NULLABLE_FIELDS`` stores
+        ``None`` as ``b''`` on a ``StringCol`` and ``from_row`` restores it;
+        an undeclared ``None`` still encodes as ``b''`` and reads back as ``''``.
+        Callers should invoke ``table.flush()`` when the write sequence is complete.
 
         :param table: The open PyTables ``Table`` to append to.
         :type table: tables.Table
@@ -198,7 +477,9 @@ class TableObject(DomainObject):
         or plain dict.
 
         Bytes values are decoded to ``str``; NumPy scalars are converted to
-        Python-native types before ``model_validate`` is called.
+        Python-native types before ``model_validate`` is called.  A declared
+        nullable field whose decoded value is ``''`` is restored to ``None``.
+        Undeclared fields are not rewritten.
 
         :param row: A ``tables.Row`` object, numpy record, or dict.
         :type row: Any
@@ -220,6 +501,9 @@ class TableObject(DomainObject):
         # Normalize bytes and numpy scalars to Python natives.
         data = {k: cls.normalize_value(v) for k, v in raw.items()}
 
+        # Restore None for declared nullable fields stored as the empty sentinel.
+        restore_null_sentinels(cls, data)
+
         # Construct and return the mapper instance.
         return cls.model_validate(data)
 
@@ -230,7 +514,9 @@ class TableObject(DomainObject):
 
         Retains a compatible signature with ``TransferObject.to_primitive``
         for use when dict-based serialization is needed alongside row-based
-        storage.
+        storage.  ``None`` is excluded except for fields listed in
+        ``_NULLABLE_FIELDS``, which keep Python ``None`` so ``map`` does not
+        substitute a string default.
 
         :param overrides: Additional key-value pairs merged into the result.
         :type overrides: dict
@@ -240,6 +526,9 @@ class TableObject(DomainObject):
 
         # Dump to dict using canonical field names, excluding None values.
         data = self.model_dump(exclude_none=True)
+
+        # Keep declared nullable Nones; undeclared Nones stay excluded.
+        preserve_nullable_nones(type(self), data, self)
 
         # Merge caller overrides.
         data.update(overrides)
@@ -283,6 +572,9 @@ class TableObject(DomainObject):
 
         # Dump the model using canonical field names, excluding None.
         data = model.model_dump(by_alias=False, exclude_none=True)
+
+        # Put declared nullable Nones back so a string default cannot replace them.
+        preserve_nullable_nones(cls, data, model)
 
         # Apply overrides so they take priority.
         data.update(overrides)
@@ -407,12 +699,62 @@ class NodeObject(TransferObject):
     explicit role.  Subclasses may extend ``_ROLES`` to add further roles
     (e.g. ``"to_h5.attrs"`` with additional ``exclude`` rules) while still
     inheriting this default.
+
+    ``_NULLABLE_FIELDS`` lists canonical Python field names whose ``None``
+    values round-trip through the empty-string sentinel.  ``to_attrs`` emits
+    ``''`` for those fields even when the role sets ``exclude_none``.  The
+    default empty list keeps today's behavior, including a stored ``''`` that
+    stays ``''``.  For a declared field, stored ``None`` and stored ``''``
+    are the same HDF5 value and both read back as ``None``.
     '''
 
     # * attribute: _ROLES
     _ROLES: ClassVar[Dict[str, Dict[str, Any]]] = {
         'to_h5.attrs': {'by_alias': True},
     }
+
+    # * attribute: _NULLABLE_FIELDS
+    _NULLABLE_FIELDS: ClassVar[List[str]] = []
+
+    # * method: to_primitive
+    def to_primitive(self, role: str = None, **overrides) -> Dict[str, Any]:
+        '''
+        Serialize this object to a dict, preserving declared nullable ``None`` values.
+
+        ``TransferObject.to_primitive`` starts from ``exclude_none=True``.
+        Fields listed in ``_NULLABLE_FIELDS`` are put back as Python ``None``
+        so ``map`` does not substitute a string default.  An explicit
+        ``exclude`` or ``include`` is still honored.  Attribute storage uses
+        ``to_attrs``, which turns those preserved ``None`` values into the
+        empty-string sentinel.
+
+        :param role: The serialization role to apply.
+        :type role: str
+        :param overrides: Additional keyword arguments passed to ``model_dump``.
+        :type overrides: dict
+        :return: The serialized dictionary.
+        :rtype: Dict[str, Any]
+        '''
+
+        # Delegate, then stop when this class has not opted into the sentinel.
+        data = super().to_primitive(role=role, **overrides)
+        if not type(self)._NULLABLE_FIELDS:
+            return data
+
+        # Rebuild the dump kwargs so explicit omit rules are not undone.
+        kwargs: Dict[str, Any] = {'exclude_none': True}
+        if role and role in type(self)._ROLES:
+            kwargs.update(type(self)._ROLES[role])
+        kwargs.update(overrides)
+
+        # Reinsert declared Nones under the same keys model_dump would use.
+        return preserve_nullable_nones(
+            type(self),
+            data,
+            self,
+            by_alias=bool(kwargs.get('by_alias', False)),
+            omitted=omitted_field_names(type(self), kwargs),
+        )
 
     # * method: to_attrs
     def to_attrs(self, role: str = 'to_h5.attrs', **overrides) -> Dict[str, Any]:
@@ -424,20 +766,27 @@ class NodeObject(TransferObject):
         values are used as the HDF5 attribute key names rather than the
         canonical Python field names.  Pass an explicit ``role`` to override.
 
+        A field listed in ``_NULLABLE_FIELDS`` is emitted as ``''`` when its
+        value is ``None``, even if the role sets ``exclude_none``.  Undeclared
+        ``None`` values are still dropped when that flag is set.
+
         Callers assign the returned dict entries directly to
         ``node._v_attrs``.
 
         :param role: Serialization role forwarded to ``to_primitive``.
             Defaults to ``"to_h5.attrs"``.
         :type role: str
-        :param overrides: Additional key-value pairs merged into the result.
+        :param overrides: Additional keyword arguments passed to ``model_dump``.
         :type overrides: dict
         :return: A flat dict of attribute name -> Python-native value pairs.
         :rtype: Dict[str, Any]
         '''
 
-        # Delegate serialization to to_primitive with the h5 attrs role.
-        return self.to_primitive(role=role, **overrides)
+        # Serialize with the attrs role, which may exclude undeclared Nones.
+        data = self.to_primitive(role=role, **overrides)
+
+        # Emit the empty-string sentinel for declared Nones instead of dropping them.
+        return apply_attr_null_sentinels(type(self), data)
 
     # * method: from_attrs (static)
     @classmethod
@@ -447,6 +796,8 @@ class NodeObject(TransferObject):
 
         Attribute values that are bytes are decoded to ``str``; NumPy scalars
         are converted to Python natives before ``model_validate`` is called.
+        A declared nullable field whose decoded value is ``''`` is restored
+        to ``None``.  Undeclared fields are not rewritten.
 
         :param attrs: Dict of attribute name -> value pairs, typically obtained
             by reading from ``node._v_attrs``.
@@ -467,8 +818,44 @@ class NodeObject(TransferObject):
             else:
                 data[k] = v
 
+        # Restore None for declared nullable fields stored as the empty sentinel.
+        restore_null_sentinels(cls, data)
+
         # Apply caller overrides.
         data.update(overrides)
 
         # Construct and return the node object.
+        return cls.model_validate(data)
+
+    # * method: from_model (static)
+    @classmethod
+    def from_model(cls, model: DomainObject, **overrides) -> 'NodeObject':
+        '''
+        Create a ``NodeObject`` from a domain model or aggregate.
+
+        Declared nullable fields keep ``None`` instead of falling back to a
+        string default when the source value is ``None``.  Classes that do
+        not set ``_NULLABLE_FIELDS`` use the inherited ``TransferObject``
+        construction unchanged.
+
+        :param model: The source domain model or aggregate.
+        :type model: DomainObject
+        :param overrides: Additional keyword arguments that take priority.
+        :type overrides: dict
+        :return: A new ``NodeObject`` instance.
+        :rtype: NodeObject
+        '''
+
+        # Keep today's construction when this class has not opted in.
+        if not cls._NULLABLE_FIELDS:
+            return super().from_model(model, **overrides)
+
+        # Dump canonical values, then put declared Nones back if a dump dropped them.
+        data = model.model_dump(by_alias=False)
+        preserve_nullable_nones(cls, data, model)
+
+        # Apply overrides so they take priority.
+        data.update(overrides)
+
+        # Validate and return the node object.
         return cls.model_validate(data)
