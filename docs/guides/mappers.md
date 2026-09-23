@@ -17,7 +17,7 @@ Both classes extend Tiferet base classes and follow the same `_ROLES` / alias co
 
 ## TableObject
 
-**Module:** `tiferet_h5.mappers.settings`
+**Module:** `tiferet_h5.mappers.core`
 
 The HDF5-native analogue of Tiferet's `TransferObject`.  Where `TransferObject` serializes via `model_dump()` → dict → YAML/JSON, `TableObject` serializes to and from typed PyTables table rows (NumPy structured records).
 
@@ -156,7 +156,7 @@ version = StepTableObject.schema_fingerprint()
 
 ## NodeObject
 
-**Module:** `tiferet_h5.mappers.settings`
+**Module:** `tiferet_h5.mappers.core`
 
 Extends Tiferet's `TransferObject` with two additional methods for mapping domain objects to and from HDF5 node attribute sets (`_v_attrs`).  Used when lightweight metadata — config values, version markers, scalar settings — is stored on a group or leaf node rather than as table rows.
 
@@ -350,5 +350,5 @@ with H5Client('catalog.h5', mode='r') as h5:
 from tiferet_h5 import TableObject, NodeObject
 # or
 from tiferet_h5.mappers import TableObject, NodeObject
-from tiferet_h5.mappers.settings import TableObject, NodeObject
+from tiferet_h5.mappers.core import TableObject, NodeObject
 ```

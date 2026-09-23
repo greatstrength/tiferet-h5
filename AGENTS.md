@@ -32,7 +32,7 @@ HDF5 has two fundamentally different storage primitives, each served by its own 
 - **Tables** (`tables.Table`) — schema-defined columnar records, analogous to a database table.  Represented by `TableObject`.
 - **Node Attributes** (`node._v_attrs`) — lightweight key-value metadata on any group or leaf node.  Represented by `NodeObject`.
 
-**`TableObject`** (`mappers/settings.py`)
+**`TableObject`** (`mappers/core.py`)
 - The HDF5-native analogue of Tiferet's `TransferObject`.
 - Declares `_H5_TYPES: ClassVar[Dict[str, Any]]` — maps HDF5 column names to PyTables `Col` instances.
 - Declares `_DESCRIPTION: ClassVar[Optional[type]]` — optional explicit `IsDescription`; auto-generated from `_H5_TYPES` if absent.
@@ -41,7 +41,7 @@ HDF5 has two fundamentally different storage primitives, each served by its own 
 - `get_description()` auto-generates and caches the `IsDescription` subclass.
 - `verify_schema(table)` checks `_H5_TYPES` against a live table's column names.
 
-**`NodeObject`** (`mappers/settings.py`)
+**`NodeObject`** (`mappers/core.py`)
 - Extends Tiferet's `TransferObject` for attribute-oriented HDF5 storage.
 - Ships with `_ROLES = {'to_h5.attrs': {'by_alias': True}}` so `to_attrs()` applies `serialization_alias` values as HDF5 attribute keys by default.
 - `to_attrs(role='to_h5.attrs')` serializes via `to_primitive(role=role)`.
@@ -144,7 +144,7 @@ See [docs/guides/domain.md](docs/guides/domain.md).
 
 ## Mappers
 
-Defined in `tiferet_h5/mappers/settings.py`.
+Defined in `tiferet_h5/mappers/core.py`.
 
 **`TableObject`** — Use for columnar table data.  Key class variables: `_H5_TYPES`, `_DESCRIPTION`.  Key methods: `get_description`, `to_row`, `from_row`, `map`, `from_model`, `normalize_value`, `encode_value`, `verify_schema`, `to_primitive`.
 
@@ -221,7 +221,7 @@ H5Repository
 - `tiferet_h5/__init__.py` — Version and public exports
 - `tiferet_h5/domain/h5.py` — Domain objects
 - `tiferet_h5/interfaces/h5.py` — `H5Service` abstract contract
-- `tiferet_h5/mappers/settings.py` — `TableObject` and `NodeObject` base classes
+- `tiferet_h5/mappers/core.py` — `TableObject` and `NodeObject` base classes
 - `tiferet_h5/utils/h5.py` — `H5Client` concrete utility and its H5 error code constants
 - `tiferet_h5/repos/h5.py` — `H5Repository` generic base
 

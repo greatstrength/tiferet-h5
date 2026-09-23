@@ -180,7 +180,7 @@ tiferet_h5/
 ├── interfaces/
 │   └── h5.py            H5Service abstract interface
 ├── mappers/
-│   └── settings.py      TableObject, NodeObject base classes
+│   └── core.py          TableObject, NodeObject base classes
 ├── utils/
 │   └── h5.py            H5Client (alias: H5); also hosts H5 error code string constants
 └── repos/
