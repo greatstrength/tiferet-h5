@@ -122,7 +122,6 @@ class MetaNodeObject(NodeObject):
         'to_h5.attrs': {'by_alias': True, 'exclude_none': True},
     }
 
-
 # ** class: nullable_note_table_object
 class NullableNoteTableObject(TableObject):
     '''
@@ -148,7 +147,6 @@ class NullableNoteTableObject(TableObject):
     _NULLABLE_FIELDS: ClassVar[List[str]] = [
         'note',
     ]
-
 
 # ** class: aliased_nullable_table_object
 class AliasedNullableTableObject(TableObject):
@@ -178,7 +176,6 @@ class AliasedNullableTableObject(TableObject):
         'service_id',
     ]
 
-
 # ** class: optional_name_table_object
 class OptionalNameTableObject(TableObject):
     '''
@@ -193,7 +190,6 @@ class OptionalNameTableObject(TableObject):
         'name': tables.StringCol(64),
     }
 
-
 # ** class: nullable_note_domain
 class NullableNoteDomain(DomainObject):
     '''
@@ -205,7 +201,6 @@ class NullableNoteDomain(DomainObject):
 
     # * attribute: note
     note: Optional[str] = Field(default='', description='Optional note.')
-
 
 # ** class: nullable_note_aggregate
 class NullableNoteAggregate(Aggregate):
@@ -220,7 +215,6 @@ class NullableNoteAggregate(Aggregate):
 
     # * attribute: note
     note: Optional[str] = Field(default='', description='Optional note.')
-
 
 # ** class: nullable_note_node_object
 class NullableNoteNodeObject(NodeObject):
@@ -243,7 +237,6 @@ class NullableNoteNodeObject(NodeObject):
     _NULLABLE_FIELDS: ClassVar[List[str]] = [
         'note',
     ]
-
 
 # ** class: aliased_nullable_node_object
 class AliasedNullableNodeObject(NodeObject):
@@ -272,7 +265,6 @@ class AliasedNullableNodeObject(NodeObject):
         'service_id',
     ]
 
-
 # ** class: optional_note_node_object
 class OptionalNoteNodeObject(NodeObject):
     '''
@@ -289,7 +281,6 @@ class OptionalNoteNodeObject(NodeObject):
     _ROLES: ClassVar[Dict[str, Dict[str, Any]]] = {
         'to_h5.attrs': {'by_alias': True, 'exclude_none': True},
     }
-
 
 # *** fixtures
 
@@ -319,7 +310,6 @@ def aliased_h5_table(tmp_path: Path):
     yield table
     h5file.close()
 
-
 # ** fixture: nullable_h5_table
 @pytest.fixture
 def nullable_h5_table(tmp_path: Path):
@@ -331,7 +321,6 @@ def nullable_h5_table(tmp_path: Path):
     table = h5file.create_table('/', 'items', NullableNoteTableObject.get_description())
     yield table
     h5file.close()
-
 
 # ** fixture: aliased_nullable_h5_table
 @pytest.fixture
@@ -345,7 +334,6 @@ def aliased_nullable_h5_table(tmp_path: Path):
     yield table
     h5file.close()
 
-
 # ** fixture: optional_name_h5_table
 @pytest.fixture
 def optional_name_h5_table(tmp_path: Path):
@@ -357,7 +345,6 @@ def optional_name_h5_table(tmp_path: Path):
     table = h5file.create_table('/', 'items', OptionalNameTableObject.get_description())
     yield table
     h5file.close()
-
 
 # *** tests
 
@@ -717,7 +704,6 @@ def test_table_object_rejects_numeric_str_field() -> None:
     with pytest.raises(ValidationError):
         ItemTableObject(name=42, score=SAMPLE_SCORE)
 
-
 # ** test: table_nullable_field_round_trips_none
 def test_table_nullable_field_round_trips_none(nullable_h5_table) -> None:
     '''
@@ -731,7 +717,6 @@ def test_table_nullable_field_round_trips_none(nullable_h5_table) -> None:
 
     assert restored.note is None
     assert restored.name == ''
-
 
 # ** test: table_aliased_nullable_field_round_trips_none
 def test_table_aliased_nullable_field_round_trips_none(aliased_nullable_h5_table) -> None:
@@ -749,7 +734,6 @@ def test_table_aliased_nullable_field_round_trips_none(aliased_nullable_h5_table
     assert restored.service_id is None
     assert restored.label == ''
 
-
 # ** test: table_undeclared_none_reads_back_as_empty_string
 def test_table_undeclared_none_reads_back_as_empty_string(optional_name_h5_table) -> None:
     '''
@@ -763,7 +747,6 @@ def test_table_undeclared_none_reads_back_as_empty_string(optional_name_h5_table
 
     assert restored.name == ''
     assert OptionalNameTableObject._NULLABLE_FIELDS == []
-
 
 # ** test: table_declared_empty_string_collapses_to_none_on_read
 def test_table_declared_empty_string_collapses_to_none_on_read(nullable_h5_table) -> None:
@@ -779,7 +762,6 @@ def test_table_declared_empty_string_collapses_to_none_on_read(nullable_h5_table
 
     assert kept.note == ''
     assert restored.note is None
-
 
 # ** test: table_from_model_storage_map_preserves_none
 def test_table_from_model_storage_map_preserves_none(nullable_h5_table) -> None:
@@ -799,7 +781,6 @@ def test_table_from_model_storage_map_preserves_none(nullable_h5_table) -> None:
     assert restored.note is None
     assert mapped.note is None
 
-
 # ** test: node_nullable_field_round_trips_none
 def test_node_nullable_field_round_trips_none() -> None:
     '''
@@ -818,7 +799,6 @@ def test_node_nullable_field_round_trips_none() -> None:
     assert restored.note is None
     assert restored.name == 'Widget'
 
-
 # ** test: node_aliased_nullable_field_round_trips_none
 def test_node_aliased_nullable_field_round_trips_none() -> None:
     '''
@@ -833,7 +813,6 @@ def test_node_aliased_nullable_field_round_trips_none() -> None:
     assert restored.service_id is None
     assert restored.label == ''
 
-
 # ** test: node_undeclared_empty_string_stays_empty
 def test_node_undeclared_empty_string_stays_empty() -> None:
     '''
@@ -846,7 +825,6 @@ def test_node_undeclared_empty_string_stays_empty() -> None:
     assert 'note' not in attrs
     assert restored.note == ''
     assert OptionalNoteNodeObject._NULLABLE_FIELDS == []
-
 
 # ** test: node_from_model_attrs_map_preserves_none
 def test_node_from_model_attrs_map_preserves_none() -> None:
@@ -864,7 +842,6 @@ def test_node_from_model_attrs_map_preserves_none() -> None:
     assert attrs['note'] == ''
     assert restored.note is None
     assert mapped.note is None
-
 
 # ** test: node_explicit_exclude_still_omits_nullable_field
 def test_node_explicit_exclude_still_omits_nullable_field() -> None:
