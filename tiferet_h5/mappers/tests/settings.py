@@ -14,7 +14,7 @@ import tables
 from tiferet.domain import DomainObject
 from tiferet.mappers import Aggregate
 
-from ..settings import NodeObject, TableObject
+from ..core import NodeObject, TableObject
 
 # *** classes
 

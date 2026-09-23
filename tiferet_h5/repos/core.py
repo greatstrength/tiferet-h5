@@ -9,7 +9,7 @@ from typing import ClassVar, Iterator, List, Optional, Type
 import tables
 
 # ** app
-from ..mappers.settings import NodeObject, TableObject
+from ..mappers.core import NodeObject, TableObject
 
 # *** constants
 

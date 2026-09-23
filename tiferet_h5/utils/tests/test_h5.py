@@ -17,7 +17,7 @@ from pydantic import Field
 # ** app
 from tiferet.interfaces import ServiceError
 
-from ...mappers.settings import TableObject
+from ...mappers.core import TableObject
 from .. import h5 as const
 from ..h5 import H5Client
 

@@ -16,7 +16,7 @@ from tiferet.utils import FileLoader
 from tiferet.interfaces import ServiceError
 
 from ..interfaces import H5Service
-from ..mappers.settings import TableObject
+from ..mappers.core import TableObject
 
 # *** constants (ids)
 

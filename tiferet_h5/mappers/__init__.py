@@ -3,4 +3,4 @@
 # *** exports
 
 # ** app
-from .settings import TableObject, NodeObject
+from .core import TableObject, NodeObject

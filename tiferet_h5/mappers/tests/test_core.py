@@ -1,4 +1,4 @@
-"""tiferet_h5 Mapper Settings Tests"""
+"""tiferet_h5 Mapper Core Tests"""
 
 # *** imports
 
@@ -16,7 +16,7 @@ from pydantic import AliasChoices, Field, ValidationError
 from tiferet.domain import DomainObject
 from tiferet.mappers import Aggregate
 
-from ..settings import NodeObject, TableObject
+from ..core import NodeObject, TableObject
 from .settings import NodeObjectTestBase, TableObjectTestBase
 
 # *** constants

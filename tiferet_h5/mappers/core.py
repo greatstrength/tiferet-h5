@@ -1,4 +1,4 @@
-"""tiferet_h5 Mapper Settings"""
+"""tiferet_h5 Mapper Core"""
 
 # *** imports
 

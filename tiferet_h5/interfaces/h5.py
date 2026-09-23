@@ -12,7 +12,7 @@ import tables
 # ** app
 from tiferet.interfaces import FileService
 
-from ..mappers.settings import TableObject
+from ..mappers.core import TableObject
 
 # *** interfaces
 

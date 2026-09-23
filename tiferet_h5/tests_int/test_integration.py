@@ -15,7 +15,7 @@ from pydantic import AliasChoices, Field
 from tiferet.domain import DomainObject
 from tiferet.mappers import Aggregate
 
-from ..mappers.settings import NodeObject, TableObject
+from ..mappers.core import NodeObject, TableObject
 from ..repos.core import NodeRepository, TableRepository
 from ..repos.h5 import H5Repository
 from ..utils.h5 import H5Client
