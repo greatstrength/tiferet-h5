@@ -15,6 +15,7 @@ from pydantic import AliasChoices, Field
 from tiferet.interfaces import ServiceError
 
 from ...mappers.core import NodeObject, TableObject
+from ...utils.h5 import H5_FILE_NOT_FOUND_ID, H5Client
 from ..core import NodeRepository, TableRepository
 from ..h5 import H5Repository
 
@@ -398,3 +399,113 @@ def test_two_mixin_repositories_share_one_file(h5_file: str) -> None:
     assert meta.catalog_name == 'Catalog Root'
     assert len(items) == 1
     assert items[0].name == 'Bolt'
+
+# ** test: file_exists_false_does_not_create_file
+def test_file_exists_false_does_not_create_file(h5_file: str) -> None:
+    '''
+    Test that file_exists() returns False for a missing path and does not create the file.
+    '''
+    repo = H5Repository(h5_file)
+
+    assert repo.file_exists() is False
+    assert Path(h5_file).exists() is False
+
+# ** test: file_exists_true_when_path_exists
+def test_file_exists_true_when_path_exists(h5_file: str) -> None:
+    '''
+    Test that file_exists() returns True once the path exists, without opening it.
+    '''
+    Path(h5_file).touch()
+    repo = H5Repository(h5_file)
+
+    assert repo.file_exists() is True
+    assert Path(h5_file).stat().st_size == 0
+
+# ** test: table_reads_missing_file_do_not_create
+def test_table_reads_missing_file_do_not_create(widget_repo: WidgetRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    '''
+    Test that get/list/exists/iter_list on a missing file return empty,
+    do not open a client, and leave the path uncreated.
+    '''
+
+    def reject_client(mode: str = None) -> None:
+        raise AssertionError('client() must not be opened for a missing-file read')
+
+    monkeypatch.setattr(widget_repo, 'client', reject_client)
+
+    assert widget_repo.get('name == b"Bolt"', catalog='hardware') is None
+    assert widget_repo.list(catalog='hardware') == []
+    assert widget_repo.exists('name == b"Bolt"', catalog='hardware') is False
+    assert list(widget_repo.iter_list(catalog='hardware')) == []
+    assert Path(widget_repo.h5_file).exists() is False
+
+# ** test: table_save_creates_file_after_missing_read
+def test_table_save_creates_file_after_missing_read(widget_repo: WidgetRepository) -> None:
+    '''
+    Test that a table read against a missing file does not create it, and a later save still does.
+    '''
+    assert widget_repo.list(catalog='hardware') == []
+    assert Path(widget_repo.h5_file).exists() is False
+
+    widget_repo.save(WidgetTableObject(name='Bolt', price=1.5), catalog='hardware')
+
+    assert Path(widget_repo.h5_file).exists() is True
+    assert widget_repo.file_exists() is True
+    result = widget_repo.get('name == b"Bolt"', catalog='hardware')
+    assert result is not None
+    assert result.name == 'Bolt'
+
+# ** test: node_reads_missing_file_do_not_create
+def test_node_reads_missing_file_do_not_create(widget_meta_repo: WidgetMetaRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    '''
+    Test that node get/exists on a missing file return empty, do not open a client,
+    and leave the path uncreated.
+    '''
+
+    def reject_client(mode: str = None) -> None:
+        raise AssertionError('client() must not be opened for a missing-file read')
+
+    monkeypatch.setattr(widget_meta_repo, 'client', reject_client)
+
+    assert widget_meta_repo.get() is None
+    assert widget_meta_repo.exists() is False
+    assert Path(widget_meta_repo.h5_file).exists() is False
+
+# ** test: node_save_creates_file_after_missing_read
+def test_node_save_creates_file_after_missing_read(widget_meta_repo: WidgetMetaRepository) -> None:
+    '''
+    Test that a node read against a missing file does not create it, and a later save still does.
+    '''
+    assert widget_meta_repo.get() is None
+    assert Path(widget_meta_repo.h5_file).exists() is False
+
+    widget_meta_repo.save(WidgetMetaNodeObject(catalog_name='Hardware'))
+
+    assert Path(widget_meta_repo.h5_file).exists() is True
+    assert widget_meta_repo.file_exists() is True
+    result = widget_meta_repo.get()
+    assert result is not None
+    assert result.catalog_name == 'Hardware'
+
+# ** test: client_read_modes_missing_file_still_raise
+@pytest.mark.parametrize('mode', ['r', 'r+'])
+def test_client_read_modes_missing_file_still_raise(h5_file: str, mode: str) -> None:
+    '''
+    Test that H5Repository.client() and H5Client in read modes still raise
+    H5_FILE_NOT_FOUND against a missing path, and do not create the file.
+    '''
+    repo = H5Repository(h5_file)
+
+    with pytest.raises(ServiceError) as repo_exc:
+        with repo.client(mode=mode):
+            pass
+
+    assert repo_exc.value.error_code == H5_FILE_NOT_FOUND_ID
+    assert Path(h5_file).exists() is False
+
+    with pytest.raises(ServiceError) as client_exc:
+        with H5Client(h5_file, mode=mode):
+            pass
+
+    assert client_exc.value.error_code == H5_FILE_NOT_FOUND_ID
+    assert Path(h5_file).exists() is False

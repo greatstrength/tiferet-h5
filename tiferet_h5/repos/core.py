@@ -27,8 +27,12 @@ class TableRepository:
     new table-backed domain concept.
 
     Intended to be composed alongside H5Repository (or any class providing
-    a compatible client() method), e.g. ``class MyRepo(TableRepository,
-    H5Repository): ...`` -- this mixin declares no __init__ of its own.
+    compatible client() and file_exists() methods), e.g.
+    ``class MyRepo(TableRepository, H5Repository): ...`` -- this mixin
+    declares no __init__ of its own.
+
+    Read methods return their empty result without opening a client when
+    the backing file is absent, so a read never creates that file.
 
     Do not also mix in NodeRepository on the same class: both mixins share
     the save()/get()/exists() method names, and Python's MRO would
@@ -114,10 +118,9 @@ class TableRepository:
         Return the first row matching condition, or None if no row matches
         or the table has not been created yet.
 
-        Uses the repository's default client mode (never `'r'`) so a
-        query against a not-yet-created file does not raise
-        H5_FILE_NOT_FOUND -- "nothing here yet" is this method's normal,
-        non-exceptional result, not a caller error.
+        A missing backing file returns None without opening a client, so
+        the read does not create the file. When the file already exists,
+        the repository's current client mode is used.
 
         :param condition: A PyTables condition string identifying one row.
         :type condition: str
@@ -128,6 +131,10 @@ class TableRepository:
         '''
 
         path = self.resolve_table_path(**path_kwargs)
+
+        # A missing file is an empty read; do not open a client that would create it.
+        if not self.file_exists():
+            return None
 
         with self.client() as h5:
             if not h5.node_exists(path):
@@ -147,7 +154,9 @@ class TableRepository:
         '''
         Return every row matching condition (or every row, when omitted)
         as a list of TableObject instances. Returns an empty list, rather
-        than raising, when the table has not been created yet.
+        than raising, when the table or backing file has not been created
+        yet. A missing file does not open a client and does not create
+        the file.
 
         :param condition: Optional PyTables condition string.
         :type condition: Optional[str]
@@ -158,6 +167,10 @@ class TableRepository:
         '''
 
         path = self.resolve_table_path(**path_kwargs)
+
+        # A missing file is an empty read; do not open a client that would create it.
+        if not self.file_exists():
+            return []
 
         with self.client() as h5:
             if not h5.node_exists(path):
@@ -181,6 +194,8 @@ class TableRepository:
         block that closes before returning. Callers who need failures to
         surface immediately should use list() instead. Yields nothing,
         rather than raising, when the table has not been created yet.
+        A missing backing file is checked before the client is opened, so
+        iteration does not create the file.
 
         :param condition: Optional PyTables condition string.
         :type condition: Optional[str]
@@ -191,6 +206,10 @@ class TableRepository:
         '''
 
         path = self.resolve_table_path(**path_kwargs)
+
+        # A missing file yields nothing; do not open a client that would create it.
+        if not self.file_exists():
+            return
 
         with self.client() as h5:
             if not h5.node_exists(path):
@@ -221,7 +240,9 @@ class TableRepository:
     def exists(self, condition: str, **path_kwargs) -> bool:
         '''
         Check whether any row matches condition. Returns False, rather
-        than raising, when the table has not been created yet.
+        than raising, when the table or backing file has not been created
+        yet. A missing file does not open a client and does not create
+        the file.
 
         :param condition: A PyTables condition string.
         :type condition: str
@@ -232,6 +253,10 @@ class TableRepository:
         '''
 
         path = self.resolve_table_path(**path_kwargs)
+
+        # A missing file is an empty read; do not open a client that would create it.
+        if not self.file_exists():
+            return False
 
         with self.client() as h5:
             if not h5.node_exists(path):
@@ -274,10 +299,14 @@ class NodeRepository:
     exists on H5Client, not an oversight here.
 
     Intended to be composed alongside H5Repository (or any class providing
-    a compatible client() method), e.g. ``class MyRepo(NodeRepository,
-    H5Repository): ...``. Do not also mix in TableRepository on the same
-    class -- see TableRepository's docstring for why (shared save()/get()/
-    exists() method names would collide under Python's MRO).
+    compatible client() and file_exists() methods), e.g.
+    ``class MyRepo(NodeRepository, H5Repository): ...``. Do not also mix
+    in TableRepository on the same class -- see TableRepository's docstring
+    for why (shared save()/get()/exists() method names would collide under
+    Python's MRO).
+
+    Read methods return their empty result without opening a client when
+    the backing file is absent, so a read never creates that file.
     '''
 
     # * attribute: node_cls
@@ -333,9 +362,9 @@ class NodeRepository:
         Return this repository's node as a NodeObject, or None if the
         node (or the underlying file itself) does not exist yet.
 
-        Uses the repository's default client mode (never `'r'`) so a read
-        against a not-yet-created file does not raise H5_FILE_NOT_FOUND --
-        "nothing here yet" is this method's normal, non-exceptional result.
+        A missing backing file returns None without opening a client, so
+        the read does not create the file. When the file already exists,
+        the repository's current client mode is used.
 
         :param path_kwargs: Values to interpolate into node_path.
         :type path_kwargs: dict
@@ -344,6 +373,10 @@ class NodeRepository:
         '''
 
         path = self.resolve_node_path(**path_kwargs)
+
+        # A missing file is an empty read; do not open a client that would create it.
+        if not self.file_exists():
+            return None
 
         with self.client() as h5:
             if not h5.node_exists(path):
@@ -358,7 +391,8 @@ class NodeRepository:
         '''
         Check whether this repository's node currently exists. Returns
         False, rather than raising, when the underlying file itself does
-        not exist yet.
+        not exist yet. A missing file does not open a client and does not
+        create the file.
 
         :param path_kwargs: Values to interpolate into node_path.
         :type path_kwargs: dict
@@ -367,6 +401,10 @@ class NodeRepository:
         '''
 
         path = self.resolve_node_path(**path_kwargs)
+
+        # A missing file is an empty read; do not open a client that would create it.
+        if not self.file_exists():
+            return False
 
         with self.client() as h5:
             return h5.node_exists(path)
