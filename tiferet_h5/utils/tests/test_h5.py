@@ -32,7 +32,6 @@ from ..h5 import (
 # ** constant: h5_extensions
 H5_EXTENSIONS = ['.h5', '.hdf5']
 
-
 # *** classes
 
 # ** class: sample_table_object
@@ -51,7 +50,6 @@ class SampleTableObject(TableObject):
         'value': tables.Float64Col(),
     }
 
-
 # *** fixtures
 
 # ** fixture: h5_path
@@ -62,7 +60,6 @@ def h5_path(tmp_path: Path) -> Path:
     '''
     return tmp_path / 'test.h5'
 
-
 # ** fixture: existing_h5
 @pytest.fixture
 def existing_h5(h5_path: Path) -> Path:
@@ -72,7 +69,6 @@ def existing_h5(h5_path: Path) -> Path:
     with H5Client(h5_path, mode='w') as h5:
         h5.create_group('/data')
     return h5_path
-
 
 # ** fixture: h5_with_table
 @pytest.fixture
@@ -88,7 +84,6 @@ def h5_with_table(h5_path: Path) -> Path:
         t.flush()
     return h5_path
 
-
 # *** tests
 
 # ** test: verify_mode_valid
@@ -99,7 +94,6 @@ def test_verify_mode_valid(h5_path: Path, mode: str) -> None:
     '''
     client = H5Client(h5_path, mode=mode)
     client.verify_mode()  # must not raise
-
 
 # ** test: verify_mode_invalid
 def test_verify_mode_invalid(h5_path: Path) -> None:
@@ -113,7 +107,6 @@ def test_verify_mode_invalid(h5_path: Path) -> None:
     assert exc_info.value.error_code == H5_INVALID_MODE_ID
     assert exc_info.value.error_code == 'H5_INVALID_MODE'
 
-
 # ** test: verify_file_read_not_found
 def test_verify_file_read_not_found(tmp_path: Path) -> None:
     '''
@@ -125,7 +118,6 @@ def test_verify_file_read_not_found(tmp_path: Path) -> None:
 
     assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
     assert exc_info.value.error_code == 'H5_FILE_NOT_FOUND'
-
 
 # ** test: verify_file_read_wrong_extension
 def test_verify_file_read_wrong_extension(tmp_path: Path) -> None:
@@ -140,7 +132,6 @@ def test_verify_file_read_wrong_extension(tmp_path: Path) -> None:
     assert exc_info.value.error_code == H5_INVALID_FILE_ID
     assert exc_info.value.error_code == 'H5_INVALID_FILE'
 
-
 # ** test: verify_file_write_parent_missing
 def test_verify_file_write_parent_missing(tmp_path: Path) -> None:
     '''
@@ -151,7 +142,6 @@ def test_verify_file_write_parent_missing(tmp_path: Path) -> None:
         H5Client.verify_file(nested, mode='w')
 
     assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
-
 
 # ** test: open_file_creates_file
 def test_open_file_creates_file(h5_path: Path) -> None:
@@ -166,7 +156,6 @@ def test_open_file_creates_file(h5_path: Path) -> None:
 
     client.close_file()
 
-
 # ** test: close_file_resets_handle
 def test_close_file_resets_handle(h5_path: Path) -> None:
     '''
@@ -178,7 +167,6 @@ def test_close_file_resets_handle(h5_path: Path) -> None:
 
     assert client.h5file is None
 
-
 # ** test: context_manager_opens_and_closes
 def test_context_manager_opens_and_closes(h5_path: Path) -> None:
     '''
@@ -188,7 +176,6 @@ def test_context_manager_opens_and_closes(h5_path: Path) -> None:
         assert h5.h5file is not None
 
     assert h5.h5file is None
-
 
 # ** test: open_file_already_open
 def test_open_file_already_open(h5_path: Path) -> None:
@@ -204,7 +191,6 @@ def test_open_file_already_open(h5_path: Path) -> None:
     assert exc_info.value.error_code == 'H5_FILE_ALREADY_OPEN'
     client.close_file()
 
-
 # ** test: open_file_corrupt_chains_cause
 def test_open_file_corrupt_chains_cause(tmp_path: Path) -> None:
     '''
@@ -219,7 +205,6 @@ def test_open_file_corrupt_chains_cause(tmp_path: Path) -> None:
     assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
     assert isinstance(exc_info.value.__cause__, (tables.HDF5ExtError, OSError))
 
-
 # ** test: operation_before_open_raises
 def test_operation_before_open_raises(h5_path: Path) -> None:
     '''
@@ -233,7 +218,6 @@ def test_operation_before_open_raises(h5_path: Path) -> None:
     assert exc_info.value.error_code == 'H5_CONN_NOT_INITIALIZED'
     assert exc_info.value.message == H5_CONN_NOT_INITIALIZED_MESSAGE
 
-
 # ** test: node_exists_true
 def test_node_exists_true(existing_h5: Path) -> None:
     '''
@@ -242,7 +226,6 @@ def test_node_exists_true(existing_h5: Path) -> None:
     with H5Client(existing_h5, mode='r') as h5:
         assert h5.node_exists('/data') is True
 
-
 # ** test: node_exists_false
 def test_node_exists_false(existing_h5: Path) -> None:
     '''
@@ -250,7 +233,6 @@ def test_node_exists_false(existing_h5: Path) -> None:
     '''
     with H5Client(existing_h5, mode='r') as h5:
         assert h5.node_exists('/does_not_exist') is False
-
 
 # ** test: create_group
 def test_create_group(h5_path: Path) -> None:
@@ -261,7 +243,6 @@ def test_create_group(h5_path: Path) -> None:
         h5.create_group('/features')
         assert h5.node_exists('/features') is True
 
-
 # ** test: create_group_nested
 def test_create_group_nested(h5_path: Path) -> None:
     '''
@@ -271,7 +252,6 @@ def test_create_group_nested(h5_path: Path) -> None:
         h5.create_group('/features/calc')
         assert h5.node_exists('/features/calc') is True
 
-
 # ** test: get_group_found
 def test_get_group_found(existing_h5: Path) -> None:
     '''
@@ -280,7 +260,6 @@ def test_get_group_found(existing_h5: Path) -> None:
     with H5Client(existing_h5, mode='r') as h5:
         group = h5.get_group('/data')
         assert group is not None
-
 
 # ** test: get_group_not_found
 def test_get_group_not_found(existing_h5: Path) -> None:
@@ -295,7 +274,6 @@ def test_get_group_not_found(existing_h5: Path) -> None:
     assert exc_info.value.error_code == 'H5_NODE_NOT_FOUND'
     assert isinstance(exc_info.value.__cause__, tables.NoSuchNodeError)
 
-
 # ** test: create_table
 def test_create_table(h5_path: Path) -> None:
     '''
@@ -305,7 +283,6 @@ def test_create_table(h5_path: Path) -> None:
         t = h5.create_table('/items', SampleTableObject.get_description())
         assert t is not None
         assert set(t.colnames) == {'name', 'value'}
-
 
 # ** test: get_or_create_table_creates
 def test_get_or_create_table_creates(h5_path: Path) -> None:
@@ -317,7 +294,6 @@ def test_get_or_create_table_creates(h5_path: Path) -> None:
         assert t is not None
         assert h5.node_exists('/items') is True
 
-
 # ** test: get_or_create_table_gets_existing
 def test_get_or_create_table_gets_existing(h5_with_table: Path) -> None:
     '''
@@ -326,7 +302,6 @@ def test_get_or_create_table_gets_existing(h5_with_table: Path) -> None:
     with H5Client(h5_with_table, mode='a') as h5:
         t = h5.get_or_create_table('/items', SampleTableObject.get_description())
         assert t.nrows == 3
-
 
 # ** test: append_rows_and_read_all
 def test_append_rows_and_read_all(h5_path: Path) -> None:
@@ -347,7 +322,6 @@ def test_append_rows_and_read_all(h5_path: Path) -> None:
     assert rows[0]['name'] == 'Alpha'
     assert rows[1]['name'] == 'Beta'
 
-
 # ** test: read_rows_sliced
 def test_read_rows_sliced(h5_with_table: Path) -> None:
     '''
@@ -359,7 +333,6 @@ def test_read_rows_sliced(h5_with_table: Path) -> None:
     assert len(rows) == 2
     assert rows[0]['name'] == 'Beta'
     assert rows[1]['name'] == 'Gamma'
-
 
 # ** test: read_rows_condition
 def test_read_rows_condition(h5_with_table: Path) -> None:
@@ -373,7 +346,6 @@ def test_read_rows_condition(h5_with_table: Path) -> None:
     names = {r['name'] for r in rows}
     assert names == {'Beta', 'Gamma'}
 
-
 # ** test: query
 def test_query(h5_with_table: Path) -> None:
     '''
@@ -384,7 +356,6 @@ def test_query(h5_with_table: Path) -> None:
 
     assert len(rows) == 1
     assert rows[0]['name'] == 'Alpha'
-
 
 # ** test: remove_rows
 def test_remove_rows(h5_with_table: Path) -> None:
@@ -402,7 +373,6 @@ def test_remove_rows(h5_with_table: Path) -> None:
     assert len(rows) == 1
     assert rows[0]['name'] == 'Gamma'
 
-
 # ** test: create_and_get_array
 def test_create_and_get_array(h5_path: Path) -> None:
     '''
@@ -419,7 +389,6 @@ def test_create_and_get_array(h5_path: Path) -> None:
 
     np.testing.assert_array_equal(result, data)
 
-
 # ** test: set_and_get_node_attr
 def test_set_and_get_node_attr(h5_path: Path) -> None:
     '''
@@ -434,7 +403,6 @@ def test_set_and_get_node_attr(h5_path: Path) -> None:
 
     assert val == '1.0'
     assert isinstance(val, str)
-
 
 # ** test: get_node_attrs_excludes_system_attrs
 def test_get_node_attrs_excludes_system_attrs(h5_path: Path) -> None:
@@ -456,7 +424,6 @@ def test_get_node_attrs_excludes_system_attrs(h5_path: Path) -> None:
     assert 'TITLE' not in attrs
     assert 'VERSION' not in attrs
 
-
 # ** test: get_node_attrs_normalizes_numpy
 def test_get_node_attrs_normalizes_numpy(h5_path: Path) -> None:
     '''
@@ -473,7 +440,6 @@ def test_get_node_attrs_normalizes_numpy(h5_path: Path) -> None:
     assert attrs['count'] == 42
     assert isinstance(attrs['count'], int)
 
-
 # ** test: get_node_attr_not_found
 def test_get_node_attr_not_found(existing_h5: Path) -> None:
     '''
@@ -485,7 +451,6 @@ def test_get_node_attr_not_found(existing_h5: Path) -> None:
 
     assert exc_info.value.error_code == H5_NODE_NOT_FOUND_ID
     assert isinstance(exc_info.value.__cause__, tables.NoSuchNodeError)
-
 
 # ** test: flush_does_not_close
 def test_flush_does_not_close(h5_path: Path) -> None:
