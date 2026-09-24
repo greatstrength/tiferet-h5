@@ -16,7 +16,7 @@ from pydantic import Field
 from tiferet import TiferetError
 
 from ...assets import constants as const
-from ...mappers.settings import TableObject
+from ...mappers.core import TableObject
 from ..h5 import H5Client
 
 # *** constants

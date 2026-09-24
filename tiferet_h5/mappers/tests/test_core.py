@@ -1,4 +1,4 @@
-"""tiferet_h5 Mapper Settings Tests"""
+"""tiferet_h5 Mapper Core Tests"""
 
 # *** imports
 
@@ -16,7 +16,7 @@ from pydantic import AliasChoices, Field
 from tiferet.domain import DomainObject
 from tiferet.mappers import Aggregate
 
-from ..settings import NodeObject, TableObject
+from ..core import NodeObject, TableObject
 
 # *** constants
 
@@ -359,9 +359,11 @@ def test_verify_schema_fail(h5_table) -> None:
     '''
     class ExtraColObject(TableObject):
         name: str = Field(default='')
+        score: float = Field(default=0.0)
         missing: str = Field(default='')
         _H5_TYPES: ClassVar[Dict[str, Any]] = {
             'name':    tables.StringCol(64),
+            'score':   tables.Float64Col(),
             'missing': tables.StringCol(64),
         }
 
@@ -369,6 +371,65 @@ def test_verify_schema_fail(h5_table) -> None:
 
     assert len(mismatches) == 1
     assert 'missing' in mismatches[0]
+    assert 'declared in _H5_TYPES' in mismatches[0]
+
+
+# ** test: verify_schema_extra_column
+def test_verify_schema_extra_column(h5_table) -> None:
+    '''
+    Test that verify_schema() reports a live column absent from _H5_TYPES.
+    '''
+    class MissingScoreObject(TableObject):
+        name: str = Field(default='')
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(64),
+        }
+
+    mismatches = MissingScoreObject.verify_schema(h5_table)
+
+    assert len(mismatches) == 1
+    assert 'score' in mismatches[0]
+    assert 'not declared in _H5_TYPES' in mismatches[0]
+
+
+# ** test: verify_schema_type_mismatch
+def test_verify_schema_type_mismatch(h5_table) -> None:
+    '''
+    Test that verify_schema() reports a PyTables type mismatch and does not raise.
+    '''
+    class WrongTypeObject(TableObject):
+        name: str = Field(default='')
+        score: int = Field(default=0)
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name':  tables.StringCol(64),
+            'score': tables.Int32Col(),
+        }
+
+    mismatches = WrongTypeObject.verify_schema(h5_table)
+
+    assert len(mismatches) == 1
+    assert 'score' in mismatches[0]
+    assert 'type mismatch' in mismatches[0]
+
+
+# ** test: verify_schema_string_itemsize_mismatch
+def test_verify_schema_string_itemsize_mismatch(h5_table) -> None:
+    '''
+    Test that verify_schema() reports a StringCol itemsize mismatch.
+    '''
+    class NarrowNameObject(TableObject):
+        name: str = Field(default='')
+        score: float = Field(default=0.0)
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name':  tables.StringCol(16),
+            'score': tables.Float64Col(),
+        }
+
+    mismatches = NarrowNameObject.verify_schema(h5_table)
+
+    assert len(mismatches) == 1
+    assert 'name' in mismatches[0]
+    assert 'itemsize mismatch' in mismatches[0]
 
 
 # ** test: node_object_to_attrs_applies_alias

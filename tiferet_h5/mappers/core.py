@@ -1,4 +1,4 @@
-"""tiferet_h5 Mapper Settings"""
+"""tiferet_h5 Mappers Core"""
 
 # *** imports
 
@@ -44,7 +44,9 @@ class TableObject(DomainObject):
     * ``from_model(model, **overrides)`` -- classmethod; creates from a domain model.
     * ``normalize_value(value)`` -- static; decodes bytes and numpy scalars.
     * ``encode_value(value, col)`` -- static; encodes Python values for a column.
-    * ``verify_schema(table)`` -- classmethod; checks live table matches ``_H5_TYPES``.
+    * ``verify_schema(table)`` -- classmethod; returns mismatch strings for a
+      missing declared column, an undeclared live column, a PyTables type
+      mismatch, or a ``StringCol`` itemsize mismatch.  Does not raise.
     '''
 
     # * attribute: model_config
@@ -295,8 +297,11 @@ class TableObject(DomainObject):
         '''
         Verify that an open table's column schema matches ``_H5_TYPES``.
 
-        Returns a list of mismatch descriptions.  An empty list indicates the
-        schema is fully consistent with the declared columns.
+        Reports a declared column missing from the live table, a live column
+        absent from ``_H5_TYPES``, a PyTables ``type`` mismatch, and a
+        ``StringCol`` ``itemsize`` mismatch.  Returns a list of mismatch
+        descriptions and does not raise.  An empty list indicates the schema
+        is fully consistent with the declared columns.
 
         :param table: The open PyTables ``Table`` to check against.
         :type table: tables.Table
@@ -307,12 +312,37 @@ class TableObject(DomainObject):
         # Collect mismatches between declared H5 columns and actual table cols.
         mismatches: List[str] = []
 
-        # Check for columns declared in _H5_TYPES that are absent in the table.
-        for field_name in cls._H5_TYPES:
+        # Check declared columns for absence, then type and itemsize drift.
+        for field_name, declared_col in cls._H5_TYPES.items():
             if field_name not in table.colnames:
                 mismatches.append(
                     f'Column "{field_name}" declared in _H5_TYPES '
                     f'but not found in table at {table._v_pathname}.'
+                )
+                continue
+
+            # Compare PyTables type identifiers for columns present on both sides.
+            actual_col = table.coldescrs[field_name]
+            if declared_col.type != actual_col.type:
+                mismatches.append(
+                    f'Column "{field_name}" type mismatch at {table._v_pathname}: '
+                    f'declared "{declared_col.type}", found "{actual_col.type}".'
+                )
+
+            # String columns share the "string" type, so compare itemsize apart from type.
+            elif declared_col.type == 'string' and declared_col.itemsize != actual_col.itemsize:
+                mismatches.append(
+                    f'Column "{field_name}" StringCol itemsize mismatch at '
+                    f'{table._v_pathname}: declared {declared_col.itemsize}, '
+                    f'found {actual_col.itemsize}.'
+                )
+
+        # Report live columns that are no longer declared.
+        for col_name in table.colnames:
+            if col_name not in cls._H5_TYPES:
+                mismatches.append(
+                    f'Column "{col_name}" present in table at {table._v_pathname} '
+                    f'but not declared in _H5_TYPES.'
                 )
 
         # Return all collected mismatch descriptions.
