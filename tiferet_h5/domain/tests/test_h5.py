@@ -18,7 +18,6 @@ def sample_column() -> H5Column:
     '''
     return H5Column(name='id', dtype='string256')
 
-
 # ** fixture: sample_schema
 @pytest.fixture
 def sample_schema() -> H5TableSchema:
@@ -35,7 +34,6 @@ def sample_schema() -> H5TableSchema:
         ],
     )
 
-
 # *** tests
 
 # ** test: h5_column_required_fields
@@ -50,7 +48,6 @@ def test_h5_column_required_fields() -> None:
     assert col.default is None
     assert col.position is None
 
-
 # ** test: h5_column_with_default
 def test_h5_column_with_default() -> None:
     '''
@@ -59,7 +56,6 @@ def test_h5_column_with_default() -> None:
     col = H5Column(name='active', dtype='bool', default=True)
 
     assert col.default is True
-
 
 # ** test: h5_column_with_position
 def test_h5_column_with_position() -> None:
@@ -70,6 +66,15 @@ def test_h5_column_with_position() -> None:
 
     assert col.position == 0
 
+# ** test: h5_column_coerces_numeric_name_to_str
+def test_h5_column_coerces_numeric_name_to_str() -> None:
+    '''
+    Test that H5Column coerces a numeric name to a string.
+    '''
+    column = H5Column(name=1, dtype='string')
+
+    assert column.name == '1'
+    assert isinstance(column.name, str)
 
 # ** test: h5_table_schema_required_fields
 def test_h5_table_schema_required_fields() -> None:
@@ -82,7 +87,6 @@ def test_h5_table_schema_required_fields() -> None:
     assert schema.title is None
     assert schema.columns == []
 
-
 # ** test: h5_table_schema_with_title_and_columns
 def test_h5_table_schema_with_title_and_columns(sample_schema: H5TableSchema) -> None:
     '''
@@ -91,7 +95,6 @@ def test_h5_table_schema_with_title_and_columns(sample_schema: H5TableSchema) ->
     assert sample_schema.node_path == '/features/calc'
     assert sample_schema.title == 'Calc Features'
     assert len(sample_schema.columns) == 3
-
 
 # ** test: h5_table_schema_get_column_found
 def test_h5_table_schema_get_column_found(sample_schema: H5TableSchema) -> None:
@@ -104,7 +107,6 @@ def test_h5_table_schema_get_column_found(sample_schema: H5TableSchema) -> None:
     assert col.name == 'name'
     assert col.dtype == 'string256'
 
-
 # ** test: h5_table_schema_get_column_not_found
 def test_h5_table_schema_get_column_not_found(sample_schema: H5TableSchema) -> None:
     '''
@@ -114,7 +116,6 @@ def test_h5_table_schema_get_column_not_found(sample_schema: H5TableSchema) -> N
 
     assert col is None
 
-
 # ** test: h5_table_schema_column_names
 def test_h5_table_schema_column_names(sample_schema: H5TableSchema) -> None:
     '''
@@ -123,7 +124,6 @@ def test_h5_table_schema_column_names(sample_schema: H5TableSchema) -> None:
     names = sample_schema.column_names()
 
     assert names == ['id', 'name', 'score']
-
 
 # ** test: h5_node_required_fields
 def test_h5_node_required_fields() -> None:
@@ -136,7 +136,6 @@ def test_h5_node_required_fields() -> None:
     assert node.node_type == 'group'
     assert node.title is None
     assert node.attrs == {}
-
 
 # ** test: h5_node_with_title_and_attrs
 def test_h5_node_with_title_and_attrs() -> None:
@@ -153,7 +152,6 @@ def test_h5_node_with_title_and_attrs() -> None:
     assert node.title == 'Feature Steps'
     assert node.attrs == {'schema_ver': '1.0'}
 
-
 # ** test: h5_node_types
 @pytest.mark.parametrize('node_type', ['group', 'table', 'array', 'leaf'])
 def test_h5_node_types(node_type: str) -> None:
@@ -163,3 +161,13 @@ def test_h5_node_types(node_type: str) -> None:
     node = H5Node(path='/some/path', node_type=node_type)
 
     assert node.node_type == node_type
+
+# ** test: h5_node_coerces_numeric_node_type_to_str
+def test_h5_node_coerces_numeric_node_type_to_str() -> None:
+    '''
+    Test that H5Node coerces a numeric node type to a string.
+    '''
+    node = H5Node(path='/n', node_type=1)
+
+    assert node.node_type == '1'
+    assert isinstance(node.node_type, str)
