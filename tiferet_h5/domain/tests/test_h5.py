@@ -71,6 +71,17 @@ def test_h5_column_with_position() -> None:
     assert col.position == 0
 
 
+# ** test: h5_column_coerces_numeric_name_to_str
+def test_h5_column_coerces_numeric_name_to_str() -> None:
+    '''
+    Test that H5Column coerces a numeric name to a string.
+    '''
+    column = H5Column(name=1, dtype='string')
+
+    assert column.name == '1'
+    assert isinstance(column.name, str)
+
+
 # ** test: h5_table_schema_required_fields
 def test_h5_table_schema_required_fields() -> None:
     '''
@@ -163,3 +174,14 @@ def test_h5_node_types(node_type: str) -> None:
     node = H5Node(path='/some/path', node_type=node_type)
 
     assert node.node_type == node_type
+
+
+# ** test: h5_node_coerces_numeric_node_type_to_str
+def test_h5_node_coerces_numeric_node_type_to_str() -> None:
+    '''
+    Test that H5Node coerces a numeric node type to a string.
+    '''
+    node = H5Node(path='/n', node_type=1)
+
+    assert node.node_type == '1'
+    assert isinstance(node.node_type, str)
