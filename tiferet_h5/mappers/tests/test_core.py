@@ -26,7 +26,6 @@ SAMPLE_NAME = 'Widget'
 # ** constant: sample_score
 SAMPLE_SCORE = 3.14
 
-
 # *** classes
 
 # ** class: item_table_object
@@ -44,7 +43,6 @@ class ItemTableObject(TableObject):
         'name':  tables.StringCol(64),
         'score': tables.Float64Col(),
     }
-
 
 # ** class: aliased_table_object
 class AliasedTableObject(TableObject):
@@ -67,7 +65,6 @@ class AliasedTableObject(TableObject):
         'label': tables.StringCol(128),
     }
 
-
 # ** class: item_aggregate
 class ItemAggregate(Aggregate):
     '''Minimal Aggregate for map() testing.'''
@@ -78,7 +75,6 @@ class ItemAggregate(Aggregate):
     # * attribute: score
     score: float = Field(default=0.0, description='Item score.')
 
-
 # ** class: item_domain
 class ItemDomain(DomainObject):
     '''Minimal DomainObject for from_model() testing.'''
@@ -88,7 +84,6 @@ class ItemDomain(DomainObject):
 
     # * attribute: score
     score: float = Field(default=0.0, description='Item score.')
-
 
 # ** class: meta_node_object
 class MetaNodeObject(NodeObject):
@@ -110,7 +105,6 @@ class MetaNodeObject(NodeObject):
         'to_h5.attrs': {'by_alias': True, 'exclude_none': True},
     }
 
-
 # *** fixtures
 
 # ** fixture: h5_table
@@ -126,7 +120,6 @@ def h5_table(tmp_path: Path):
     yield table
     h5file.close()
 
-
 # ** fixture: aliased_h5_table
 @pytest.fixture
 def aliased_h5_table(tmp_path: Path):
@@ -138,7 +131,6 @@ def aliased_h5_table(tmp_path: Path):
     table = h5file.create_table('/', 'items', AliasedTableObject.get_description())
     yield table
     h5file.close()
-
 
 # *** tests
 
@@ -156,7 +148,6 @@ def test_get_description_auto_generates() -> None:
     assert 'name' in desc.columns
     assert 'score' in desc.columns
 
-
 # ** test: get_description_cached
 def test_get_description_cached() -> None:
     '''
@@ -166,7 +157,6 @@ def test_get_description_cached() -> None:
     second = ItemTableObject.get_description()
 
     assert first is second
-
 
 # ** test: get_description_requires_h5_types
 def test_get_description_requires_h5_types() -> None:
@@ -180,7 +170,6 @@ def test_get_description_requires_h5_types() -> None:
     with pytest.raises(ValueError, match='must define _H5_TYPES or _DESCRIPTION'):
         EmptyTableObject.get_description()
 
-
 # ** test: normalize_value_bytes
 def test_normalize_value_bytes() -> None:
     '''
@@ -190,7 +179,6 @@ def test_normalize_value_bytes() -> None:
 
     assert result == 'hello'
     assert isinstance(result, str)
-
 
 # ** test: normalize_value_numpy_scalar
 def test_normalize_value_numpy_scalar() -> None:
@@ -202,7 +190,6 @@ def test_normalize_value_numpy_scalar() -> None:
     assert isinstance(result, float)
     assert abs(result - 3.14) < 1e-9
 
-
 # ** test: normalize_value_python_native
 def test_normalize_value_python_native() -> None:
     '''
@@ -211,7 +198,6 @@ def test_normalize_value_python_native() -> None:
     assert TableObject.normalize_value('hello') == 'hello'
     assert TableObject.normalize_value(42) == 42
     assert TableObject.normalize_value(True) is True
-
 
 # ** test: encode_value_str_to_bytes_for_string_col
 def test_encode_value_str_to_bytes_for_string_col() -> None:
@@ -223,7 +209,6 @@ def test_encode_value_str_to_bytes_for_string_col() -> None:
 
     assert result == b'hello'
 
-
 # ** test: encode_value_none_string_col
 def test_encode_value_none_string_col() -> None:
     '''
@@ -233,7 +218,6 @@ def test_encode_value_none_string_col() -> None:
     result = TableObject.encode_value(None, col)
 
     assert result == b''
-
 
 # ** test: encode_value_none_bool_col
 def test_encode_value_none_bool_col() -> None:
@@ -245,7 +229,6 @@ def test_encode_value_none_bool_col() -> None:
 
     assert result is False
 
-
 # ** test: encode_value_none_numeric_col
 def test_encode_value_none_numeric_col() -> None:
     '''
@@ -255,7 +238,6 @@ def test_encode_value_none_numeric_col() -> None:
     result = TableObject.encode_value(None, col)
 
     assert result == 0
-
 
 # ** test: to_row_from_row_round_trip
 def test_to_row_from_row_round_trip(h5_table) -> None:
@@ -274,7 +256,6 @@ def test_to_row_from_row_round_trip(h5_table) -> None:
     assert restored.name == SAMPLE_NAME
     assert abs(restored.score - SAMPLE_SCORE) < 1e-9
 
-
 # ** test: to_row_alias_applied_to_column
 def test_to_row_alias_applied_to_column(aliased_h5_table) -> None:
     '''
@@ -286,7 +267,6 @@ def test_to_row_alias_applied_to_column(aliased_h5_table) -> None:
 
     rows = list(aliased_h5_table.iterrows())
     assert rows[0]['grp'] == b'calc'
-
 
 # ** test: from_row_resolves_alias
 def test_from_row_resolves_alias(aliased_h5_table) -> None:
@@ -302,7 +282,6 @@ def test_from_row_resolves_alias(aliased_h5_table) -> None:
     assert restored.group_id == 'calc'
     assert restored.label == 'add'
 
-
 # ** test: to_primitive_uses_canonical_names
 def test_to_primitive_uses_canonical_names() -> None:
     '''
@@ -314,7 +293,6 @@ def test_to_primitive_uses_canonical_names() -> None:
     assert 'name' in data
     assert 'score' in data
     assert data['name'] == SAMPLE_NAME
-
 
 # ** test: map_produces_aggregate
 def test_map_produces_aggregate() -> None:
@@ -328,7 +306,6 @@ def test_map_produces_aggregate() -> None:
     assert agg.name == SAMPLE_NAME
     assert abs(agg.score - SAMPLE_SCORE) < 1e-9
 
-
 # ** test: from_model_creates_table_object
 def test_from_model_creates_table_object() -> None:
     '''
@@ -341,7 +318,6 @@ def test_from_model_creates_table_object() -> None:
     assert table_obj.name == SAMPLE_NAME
     assert abs(table_obj.score - SAMPLE_SCORE) < 1e-9
 
-
 # ** test: verify_schema_pass
 def test_verify_schema_pass(h5_table) -> None:
     '''
@@ -350,7 +326,6 @@ def test_verify_schema_pass(h5_table) -> None:
     mismatches = ItemTableObject.verify_schema(h5_table)
 
     assert mismatches == []
-
 
 # ** test: verify_schema_fail
 def test_verify_schema_fail(h5_table) -> None:
@@ -373,7 +348,6 @@ def test_verify_schema_fail(h5_table) -> None:
     assert 'missing' in mismatches[0]
     assert 'declared in _H5_TYPES' in mismatches[0]
 
-
 # ** test: verify_schema_extra_column
 def test_verify_schema_extra_column(h5_table) -> None:
     '''
@@ -390,7 +364,6 @@ def test_verify_schema_extra_column(h5_table) -> None:
     assert len(mismatches) == 1
     assert 'score' in mismatches[0]
     assert 'not declared in _H5_TYPES' in mismatches[0]
-
 
 # ** test: verify_schema_type_mismatch
 def test_verify_schema_type_mismatch(h5_table) -> None:
@@ -411,7 +384,6 @@ def test_verify_schema_type_mismatch(h5_table) -> None:
     assert 'score' in mismatches[0]
     assert 'type mismatch' in mismatches[0]
 
-
 # ** test: verify_schema_string_itemsize_mismatch
 def test_verify_schema_string_itemsize_mismatch(h5_table) -> None:
     '''
@@ -431,7 +403,6 @@ def test_verify_schema_string_itemsize_mismatch(h5_table) -> None:
     assert 'name' in mismatches[0]
     assert 'itemsize mismatch' in mismatches[0]
 
-
 # ** test: node_object_to_attrs_applies_alias
 def test_node_object_to_attrs_applies_alias() -> None:
     '''
@@ -445,7 +416,6 @@ def test_node_object_to_attrs_applies_alias() -> None:
     assert attrs['desc'] == 'Arithmetic ops'
     assert attrs['name'] == 'Calculator'
 
-
 # ** test: node_object_from_attrs_resolves_alias
 def test_node_object_from_attrs_resolves_alias() -> None:
     '''
@@ -457,7 +427,6 @@ def test_node_object_from_attrs_resolves_alias() -> None:
     assert obj.name == 'Calculator'
     assert obj.description == 'Arithmetic ops'
 
-
 # ** test: node_object_from_attrs_decodes_bytes
 def test_node_object_from_attrs_decodes_bytes() -> None:
     '''
@@ -468,7 +437,6 @@ def test_node_object_from_attrs_decodes_bytes() -> None:
 
     assert obj.name == 'Calculator'
     assert obj.description == 'Arithmetic ops'
-
 
 # ** test: node_object_round_trip
 def test_node_object_round_trip() -> None:

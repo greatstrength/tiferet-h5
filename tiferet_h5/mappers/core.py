@@ -348,7 +348,6 @@ class TableObject(DomainObject):
         # Return all collected mismatch descriptions.
         return mismatches
 
-
 # ** class: node_object
 class NodeObject(TransferObject):
     '''
