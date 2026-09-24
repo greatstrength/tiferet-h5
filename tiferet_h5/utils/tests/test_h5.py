@@ -13,11 +13,19 @@ import tables
 from pydantic import Field
 
 # ** app
-from tiferet import TiferetError
+from tiferet.interfaces import ServiceError
 
-from ...assets import constants as const
 from ...mappers.core import TableObject
-from ..h5 import H5Client
+from ..h5 import (
+    H5_CONN_NOT_INITIALIZED_ID,
+    H5_CONN_NOT_INITIALIZED_MESSAGE,
+    H5_FILE_ALREADY_OPEN_ID,
+    H5_FILE_NOT_FOUND_ID,
+    H5_INVALID_FILE_ID,
+    H5_INVALID_MODE_ID,
+    H5_NODE_NOT_FOUND_ID,
+    H5Client,
+)
 
 # *** constants
 
@@ -99,10 +107,11 @@ def test_verify_mode_invalid(h5_path: Path) -> None:
     Test that verify_mode() raises H5_INVALID_MODE for an unrecognised mode.
     '''
     client = H5Client(h5_path, mode='x')
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.verify_mode()
 
-    assert exc_info.value.error_code == const.H5_INVALID_MODE_ID
+    assert exc_info.value.error_code == H5_INVALID_MODE_ID
+    assert exc_info.value.error_code == 'H5_INVALID_MODE'
 
 
 # ** test: verify_file_read_not_found
@@ -111,10 +120,11 @@ def test_verify_file_read_not_found(tmp_path: Path) -> None:
     Test that verify_file() raises H5_FILE_NOT_FOUND when the file is absent in read mode.
     '''
     missing = tmp_path / 'missing.h5'
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(missing, mode='r')
 
-    assert exc_info.value.error_code == const.H5_FILE_NOT_FOUND_ID
+    assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
+    assert exc_info.value.error_code == 'H5_FILE_NOT_FOUND'
 
 
 # ** test: verify_file_read_wrong_extension
@@ -124,10 +134,11 @@ def test_verify_file_read_wrong_extension(tmp_path: Path) -> None:
     '''
     bad_ext = tmp_path / 'data.yaml'
     bad_ext.touch()
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(bad_ext, mode='r')
 
-    assert exc_info.value.error_code == const.H5_INVALID_FILE_ID
+    assert exc_info.value.error_code == H5_INVALID_FILE_ID
+    assert exc_info.value.error_code == 'H5_INVALID_FILE'
 
 
 # ** test: verify_file_write_parent_missing
@@ -136,10 +147,10 @@ def test_verify_file_write_parent_missing(tmp_path: Path) -> None:
     Test that verify_file() raises H5_FILE_NOT_FOUND when the parent dir is absent.
     '''
     nested = tmp_path / 'nonexistent_dir' / 'data.h5'
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(nested, mode='w')
 
-    assert exc_info.value.error_code == const.H5_FILE_NOT_FOUND_ID
+    assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
 
 
 # ** test: open_file_creates_file
@@ -186,11 +197,27 @@ def test_open_file_already_open(h5_path: Path) -> None:
     '''
     client = H5Client(h5_path, mode='a')
     client.open_file()
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.open_file()
 
-    assert exc_info.value.error_code == const.H5_FILE_ALREADY_OPEN_ID
+    assert exc_info.value.error_code == H5_FILE_ALREADY_OPEN_ID
+    assert exc_info.value.error_code == 'H5_FILE_ALREADY_OPEN'
     client.close_file()
+
+
+# ** test: open_file_corrupt_chains_cause
+def test_open_file_corrupt_chains_cause(tmp_path: Path) -> None:
+    '''
+    Test that a failed open raises ServiceError chained to the driver exception.
+    '''
+    bad = tmp_path / 'bad.h5'
+    bad.write_bytes(b'not an hdf5 file')
+    client = H5Client(bad, mode='r')
+    with pytest.raises(ServiceError) as exc_info:
+        client.open_file()
+
+    assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
+    assert isinstance(exc_info.value.__cause__, (tables.HDF5ExtError, OSError))
 
 
 # ** test: operation_before_open_raises
@@ -199,10 +226,12 @@ def test_operation_before_open_raises(h5_path: Path) -> None:
     Test that calling node_exists() before open_file() raises H5_CONN_NOT_INITIALIZED.
     '''
     client = H5Client(h5_path, mode='a')
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.node_exists('/')
 
-    assert exc_info.value.error_code == const.H5_CONN_NOT_INITIALIZED_ID
+    assert exc_info.value.error_code == H5_CONN_NOT_INITIALIZED_ID
+    assert exc_info.value.error_code == 'H5_CONN_NOT_INITIALIZED'
+    assert exc_info.value.message == H5_CONN_NOT_INITIALIZED_MESSAGE
 
 
 # ** test: node_exists_true
@@ -259,10 +288,12 @@ def test_get_group_not_found(existing_h5: Path) -> None:
     Test that get_group() raises H5_NODE_NOT_FOUND for a missing path.
     '''
     with H5Client(existing_h5, mode='r') as h5:
-        with pytest.raises(TiferetError) as exc_info:
+        with pytest.raises(ServiceError) as exc_info:
             h5.get_group('/does_not_exist')
 
-    assert exc_info.value.error_code == const.H5_NODE_NOT_FOUND_ID
+    assert exc_info.value.error_code == H5_NODE_NOT_FOUND_ID
+    assert exc_info.value.error_code == 'H5_NODE_NOT_FOUND'
+    assert isinstance(exc_info.value.__cause__, tables.NoSuchNodeError)
 
 
 # ** test: create_table
@@ -449,10 +480,11 @@ def test_get_node_attr_not_found(existing_h5: Path) -> None:
     Test that get_group() raises H5_NODE_NOT_FOUND for a missing node.
     '''
     with H5Client(existing_h5, mode='r') as h5:
-        with pytest.raises(TiferetError) as exc_info:
+        with pytest.raises(ServiceError) as exc_info:
             h5.get_node_attrs('/missing')
 
-    assert exc_info.value.error_code == const.H5_NODE_NOT_FOUND_ID
+    assert exc_info.value.error_code == H5_NODE_NOT_FOUND_ID
+    assert isinstance(exc_info.value.__cause__, tables.NoSuchNodeError)
 
 
 # ** test: flush_does_not_close
