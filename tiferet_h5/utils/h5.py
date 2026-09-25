@@ -489,6 +489,7 @@ class H5Client(FileLoader, H5Service):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -500,6 +501,9 @@ class H5Client(FileLoader, H5Service):
         :type description: type
         :param title: Optional human-readable title.
         :type title: str
+        :param filters: Optional PyTables filter policy. ``None`` keeps the
+            uncompressed create path.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Additional kwargs forwarded to ``tables.File.create_table``.
         :type kwargs: dict
         :return: The created PyTables table object.
@@ -528,12 +532,13 @@ class H5Client(FileLoader, H5Service):
             # Resolve the parent group.
             parent = self.h5file.get_node(parent_path)
 
-            # Create and return the table.
+            # Create and return the table, forwarding any filter policy.
             return self.h5file.create_table(
                 parent,
                 table_name,
                 description,
                 title=title,
+                filters=filters,
                 **kwargs,
             )
 
@@ -590,6 +595,7 @@ class H5Client(FileLoader, H5Service):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -601,6 +607,9 @@ class H5Client(FileLoader, H5Service):
         :type description: type
         :param title: Optional title used when creating.
         :type title: str
+        :param filters: Optional PyTables filter policy, forwarded only when
+            the table is created. An existing table is returned unchanged.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Extra kwargs forwarded to ``create_table`` when creating.
         :type kwargs: dict
         :return: The existing or newly created PyTables table object.
@@ -615,8 +624,14 @@ class H5Client(FileLoader, H5Service):
         parent_path = path.rsplit('/', 1)[0]
         self.ensure_parent_groups(parent_path or '/')
 
-        # Create and return the table without recreating an existing one.
-        return self.create_table(path, description, title=title, **kwargs)
+        # Forward filters only on the create path.
+        return self.create_table(
+            path,
+            description,
+            title=title,
+            filters=filters,
+            **kwargs,
+        )
 
     # * method: assert_schema
     # >> see: @guides/utils/h5.md#h5client-assert-schema
@@ -1072,6 +1087,7 @@ class H5Client(FileLoader, H5Service):
             path: str,
             data: Any,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
         ) -> Any:
         '''
         Create an array node at the specified path.
@@ -1082,6 +1098,9 @@ class H5Client(FileLoader, H5Service):
         :type data: Any
         :param title: Optional human-readable title.
         :type title: str
+        :param filters: Optional PyTables filter policy. ``None`` creates a
+            plain ``Array``. A value creates a compressed ``CArray``.
+        :type filters: Optional[tables.Filters]
         :return: The created PyTables array object.
         :rtype: Any
         :raises ServiceError: If the file is not open or creation fails.
@@ -1107,8 +1126,23 @@ class H5Client(FileLoader, H5Service):
             # Resolve the parent group.
             parent = self.h5file.get_node(parent_path)
 
-            # Create and return the array node.
-            return self.h5file.create_array(parent, array_name, data, title=title)
+            # A filter policy requires a chunked CArray. Omit it for a plain Array.
+            if filters is None:
+                return self.h5file.create_array(
+                    parent,
+                    array_name,
+                    data,
+                    title=title,
+                )
+
+            # Create and return the compressed array.
+            return self.h5file.create_carray(
+                parent,
+                array_name,
+                title=title,
+                filters=filters,
+                obj=data,
+            )
 
         except tables.NoSuchNodeError as e:
 

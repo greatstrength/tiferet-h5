@@ -6,6 +6,9 @@
 from abc import abstractmethod
 from typing import Any, Dict, Iterator, List, Optional
 
+# ** infra
+import tables
+
 # ** app
 from tiferet.interfaces import FileService
 
@@ -86,6 +89,7 @@ class H5Service(FileService):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -99,6 +103,9 @@ class H5Service(FileService):
         :type description: type
         :param title: Optional human-readable title for the table.
         :type title: str
+        :param filters: Optional PyTables filter policy. ``None`` keeps the
+            uncompressed create path.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Additional keyword arguments forwarded to
             ``tables.File.create_table``.
         :type kwargs: dict
@@ -126,6 +133,7 @@ class H5Service(FileService):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -137,6 +145,9 @@ class H5Service(FileService):
         :type description: type
         :param title: Optional title used when creating.
         :type title: str
+        :param filters: Optional PyTables filter policy, forwarded only when
+            the table is created. An existing table is returned unchanged.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Extra kwargs forwarded to ``create_table`` when creating.
         :type kwargs: dict
         :return: The existing or newly created PyTables table object.
@@ -301,6 +312,7 @@ class H5Service(FileService):
             path: str,
             data: Any,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
         ) -> Any:
         '''
         Create an array node at the specified path.
@@ -311,6 +323,9 @@ class H5Service(FileService):
         :type data: Any
         :param title: Optional human-readable title.
         :type title: str
+        :param filters: Optional PyTables filter policy. ``None`` creates a
+            plain ``Array``. A value creates a compressed ``CArray``.
+        :type filters: Optional[tables.Filters]
         :return: The created PyTables array object.
         :rtype: Any
         '''
