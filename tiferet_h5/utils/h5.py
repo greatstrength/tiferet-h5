@@ -35,6 +35,9 @@ H5_CONN_NOT_INITIALIZED_ID = 'H5_CONN_NOT_INITIALIZED'
 # ** constant: h5_node_not_found_id
 H5_NODE_NOT_FOUND_ID = 'H5_NODE_NOT_FOUND'
 
+# ** constant: h5_group_create_failed_id
+H5_GROUP_CREATE_FAILED_ID = 'H5_GROUP_CREATE_FAILED'
+
 # ** constant: h5_table_create_failed_id
 H5_TABLE_CREATE_FAILED_ID = 'H5_TABLE_CREATE_FAILED'
 
@@ -302,6 +305,59 @@ class H5Client(FileLoader, H5Service):
         # Delegate to PyTables node existence check.
         return self.h5file.__contains__(path)
 
+    # * method: ensure_parent_groups
+    def ensure_parent_groups(self, parent_path: str) -> None:
+        '''
+        Create every missing group along an absolute HDF5 path.
+
+        ``'/'`` is a no-op. Each missing segment is created individually
+        because ``tables.File.create_group`` requires ``name`` to be a single
+        path segment.
+
+        :param parent_path: Absolute HDF5 path whose group chain must exist.
+        :type parent_path: str
+        :raises ServiceError: If the file is not open, or a PyTables failure
+            occurs while creating a missing group.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(
+                self,
+                H5_CONN_NOT_INITIALIZED_ID,
+                message=H5_CONN_NOT_INITIALIZED_MESSAGE,
+            )
+
+        # The root group always exists.
+        if parent_path in ('', '/'):
+            return
+
+        # Walk each non-empty path segment from the root.
+        current = ''
+        for segment in parent_path.split('/'):
+            if not segment:
+                continue
+
+            parent = current or '/'
+            current = f'{current}/{segment}'
+
+            # Create this segment if it does not already exist.
+            if not self.node_exists(current):
+                try:
+                    self.h5file.create_group(parent, segment)
+
+                except (tables.NodeError, tables.HDF5ExtError, ValueError, OSError) as e:
+
+                    # Wrap driver failures as a dedicated group-creation error.
+                    ServiceError.raise_for(
+                        self,
+                        H5_GROUP_CREATE_FAILED_ID,
+                        message=f'Failed to create group at {current}: {e}.',
+                        cause=e,
+                        original_error=str(e),
+                        path=current,
+                    )
+
     # * method: create_group
     def create_group(self,
             path: str,
@@ -319,7 +375,7 @@ class H5Client(FileLoader, H5Service):
         :type create_parents: bool
         :return: The created PyTables group object.
         :rtype: Any
-        :raises ServiceError: If the file is not open.
+        :raises ServiceError: If the file is not open or group creation fails.
         '''
 
         # Guard against an uninitialised file handle.
@@ -334,12 +390,26 @@ class H5Client(FileLoader, H5Service):
         parent_path, group_name = path.rsplit('/', 1)
         parent_path = parent_path or '/'
 
-        # Create intermediate parents if requested and absent.
-        if create_parents and not self.node_exists(parent_path):
-            self.h5file.create_group('/', parent_path.lstrip('/'), createparents=True)
+        # Create missing parents before the leaf group.
+        if create_parents:
+            self.ensure_parent_groups(parent_path)
 
-        # Create and return the group.
-        return self.h5file.create_group(parent_path, group_name, title=title)
+        try:
+
+            # Create and return the group.
+            return self.h5file.create_group(parent_path, group_name, title=title)
+
+        except (tables.NodeError, tables.HDF5ExtError, ValueError, OSError) as e:
+
+            # Wrap leaf group creation failures as structured errors.
+            ServiceError.raise_for(
+                self,
+                H5_GROUP_CREATE_FAILED_ID,
+                message=f'Failed to create group at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+            )
 
     # * method: get_group
     def get_group(self, path: str) -> Any:
@@ -412,12 +482,13 @@ class H5Client(FileLoader, H5Service):
         parent_path, table_name = path.rsplit('/', 1)
         parent_path = parent_path or '/'
 
+        # Create missing parents before the table leaf so a group failure
+        # keeps its own error code instead of being wrapped as a table error.
+        self.ensure_parent_groups(parent_path)
+
         try:
 
-            # Resolve the parent group, creating it if absent.
-            if not self.node_exists(parent_path):
-                self.h5file.create_group('/', parent_path.lstrip('/'), createparents=True)
-
+            # Resolve the parent group.
             parent = self.h5file.get_node(parent_path)
 
             # Create and return the table.
@@ -503,7 +574,11 @@ class H5Client(FileLoader, H5Service):
         if self.node_exists(path):
             return self.get_table(path)
 
-        # Otherwise create and return a new table.
+        # Create missing parents, then create and return a new table.
+        parent_path = path.rsplit('/', 1)[0]
+        self.ensure_parent_groups(parent_path or '/')
+
+        # Create and return the table without recreating an existing one.
         return self.create_table(path, description, title=title, **kwargs)
 
     # * method: append_rows
@@ -772,6 +847,9 @@ class H5Client(FileLoader, H5Service):
         # Split path into parent group path and array name.
         parent_path, array_name = path.rsplit('/', 1)
         parent_path = parent_path or '/'
+
+        # Create missing parents before the array leaf.
+        self.ensure_parent_groups(parent_path)
 
         try:
 

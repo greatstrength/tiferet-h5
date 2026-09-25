@@ -21,6 +21,7 @@ from ..h5 import (
     H5_CONN_NOT_INITIALIZED_MESSAGE,
     H5_FILE_ALREADY_OPEN_ID,
     H5_FILE_NOT_FOUND_ID,
+    H5_GROUP_CREATE_FAILED_ID,
     H5_INVALID_FILE_ID,
     H5_INVALID_MODE_ID,
     H5_NODE_NOT_FOUND_ID,
@@ -460,3 +461,58 @@ def test_flush_does_not_close(h5_path: Path) -> None:
     with H5Client(h5_path, mode='w') as h5:
         h5.flush()
         assert h5.h5file is not None
+
+# ** test: ensure_parent_groups_root
+def test_ensure_parent_groups_root(h5_path: Path) -> None:
+    '''
+    Test that ensure_parent_groups('/') is a no-op and does not raise.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.ensure_parent_groups('/')
+
+    assert not H5Client.ensure_parent_groups.__name__.startswith('_')
+    assert H5_GROUP_CREATE_FAILED_ID == 'H5_GROUP_CREATE_FAILED'
+
+# ** test: ensure_parent_groups_unopened
+def test_ensure_parent_groups_unopened(h5_path: Path) -> None:
+    '''
+    Test that ensure_parent_groups() raises H5_CONN_NOT_INITIALIZED before open.
+    '''
+    client = H5Client(h5_path, mode='a')
+    with pytest.raises(ServiceError) as exc_info:
+        client.ensure_parent_groups('/a')
+
+    assert exc_info.value.error_code == H5_CONN_NOT_INITIALIZED_ID
+
+# ** test: create_table_auto_creates_parents
+def test_create_table_auto_creates_parents(h5_path: Path) -> None:
+    '''
+    Test that create_table() creates missing intermediate groups, then the table.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        table = h5.create_table('/a/b/items', SampleTableObject.get_description())
+
+        assert table is not None
+        assert h5.node_exists('/a') is True
+        assert h5.node_exists('/a/b') is True
+        assert h5.node_exists('/a/b/items') is True
+
+# ** test: ensure_parent_groups_failure_raises
+def test_ensure_parent_groups_failure_raises(h5_path: Path, monkeypatch) -> None:
+    '''
+    Test that a PyTables failure inside parent-group creation raises
+    H5_GROUP_CREATE_FAILED with the driver exception chained as the cause.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+
+        # Force the next group create to fail at the driver.
+        def fail_create(*args, **kwargs):
+            raise tables.NodeError('create failed')
+
+        monkeypatch.setattr(h5.h5file, 'create_group', fail_create)
+        with pytest.raises(ServiceError) as exc_info:
+            h5.ensure_parent_groups('/missing/parent')
+
+    assert exc_info.value.error_code == H5_GROUP_CREATE_FAILED_ID
+    assert exc_info.value.error_code == 'H5_GROUP_CREATE_FAILED'
+    assert isinstance(exc_info.value.__cause__, tables.NodeError)
