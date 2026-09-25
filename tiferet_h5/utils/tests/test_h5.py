@@ -3,6 +3,7 @@
 # *** imports
 
 # ** core
+import inspect
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, ClassVar, Dict
@@ -16,6 +17,7 @@ from pydantic import Field
 # ** app
 from tiferet.interfaces import ServiceError
 
+from ...interfaces import H5Service
 from ...mappers.core import TableObject
 from ..h5 import (
     H5_CONN_NOT_INITIALIZED_ID,
@@ -23,6 +25,7 @@ from ..h5 import (
     H5_FILE_ALREADY_OPEN_ID,
     H5_FILE_NOT_FOUND_ID,
     H5_GROUP_CREATE_FAILED_ID,
+    H5_INDEX_FAILED_ID,
     H5_INVALID_FILE_ID,
     H5_INVALID_MODE_ID,
     H5_NODE_NOT_FOUND_ID,
@@ -51,6 +54,22 @@ class SampleTableObject(TableObject):
     _H5_TYPES: ClassVar[Dict[str, Any]] = {
         'name':  tables.StringCol(128),
         'value': tables.Float64Col(),
+    }
+
+# ** class: sku_table_object
+class SkuTableObject(TableObject):
+    '''TableObject with an indexable sku column for index tests.'''
+
+    # * attribute: sku
+    sku: str = Field(default='', description='Stock keeping unit.')
+
+    # * attribute: missing
+    missing: str = Field(default='', description='Unindexed companion column.')
+
+    # * attribute: _H5_TYPES
+    _H5_TYPES: ClassVar[Dict[str, Any]] = {
+        'sku': tables.StringCol(32),
+        'missing': tables.StringCol(32),
     }
 
 # *** fixtures
@@ -556,3 +575,145 @@ def test_ensure_parent_groups_failure_raises(h5_path: Path, monkeypatch) -> None
     assert exc_info.value.error_code == H5_GROUP_CREATE_FAILED_ID
     assert exc_info.value.error_code == 'H5_GROUP_CREATE_FAILED'
     assert isinstance(exc_info.value.__cause__, tables.NodeError)
+
+# ** test: index_method_signatures
+def test_index_method_signatures() -> None:
+    '''
+    Test that H5Service and H5Client expose the column-index signatures.
+    '''
+    assert H5_INDEX_FAILED_ID == 'H5_INDEX_FAILED'
+
+    for cls in (H5Service, H5Client):
+        create_index = inspect.signature(cls.create_index)
+        is_indexed = inspect.signature(cls.is_indexed)
+        reindex = inspect.signature(cls.reindex)
+
+        assert list(create_index.parameters) == ['self', 'path', 'column', 'kwargs']
+        assert create_index.parameters['kwargs'].kind is inspect.Parameter.VAR_KEYWORD
+        assert create_index.return_annotation is None
+
+        assert list(is_indexed.parameters) == ['self', 'path', 'column']
+        assert is_indexed.return_annotation is bool
+
+        assert list(reindex.parameters) == ['self', 'path', 'column']
+        assert reindex.parameters['column'].default is None
+        assert reindex.return_annotation is None
+
+# ** test: create_index_and_is_indexed
+def test_create_index_and_is_indexed(h5_path: Path) -> None:
+    '''
+    Test that create_index() builds a CSI index and is_indexed() reports it.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SkuTableObject.get_description())
+        h5.append_rows('/items', [{'sku': 'A-1', 'missing': 'x'}])
+
+        assert h5.is_indexed('/items', 'sku') is False
+        h5.create_index('/items', 'sku', filters=tables.Filters(complevel=1))
+        assert h5.is_indexed('/items', 'sku') is True
+
+        index = h5.get_table('/items').cols.sku.index
+        assert index.kind == 'full'
+        assert index.filters.complevel == 1
+
+# ** test: create_index_failure_chains_cause
+def test_create_index_failure_chains_cause(h5_path: Path) -> None:
+    '''
+    Test that a second create_index() raises H5_INDEX_FAILED and chains the cause.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SkuTableObject.get_description())
+        h5.create_index('/items', 'sku')
+        with pytest.raises(ServiceError) as exc_info:
+            h5.create_index('/items', 'sku')
+
+    assert exc_info.value.error_code == H5_INDEX_FAILED_ID
+    assert exc_info.value.error_code == 'H5_INDEX_FAILED'
+    assert exc_info.value.__cause__ is not None
+
+# ** test: reindex_unindexed_column_raises
+def test_reindex_unindexed_column_raises(h5_path: Path) -> None:
+    '''
+    Test that reindex() raises H5_INDEX_FAILED for a column that was never indexed.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SkuTableObject.get_description())
+        with pytest.raises(ServiceError) as exc_info:
+            h5.reindex('/items', 'missing')
+
+    assert exc_info.value.error_code == H5_INDEX_FAILED_ID
+    assert exc_info.value.error_code == 'H5_INDEX_FAILED'
+
+# ** test: reindex_existing_columns
+def test_reindex_existing_columns(h5_path: Path) -> None:
+    '''
+    Test that reindex() rebuilds a named index and, with no column, every indexed column.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SkuTableObject.get_description())
+        h5.append_rows('/items', [{'sku': 'A-1', 'missing': 'x'}])
+
+        # No indexes yet: omitting the column recomputes an empty set.
+        h5.reindex('/items')
+        assert h5.is_indexed('/items', 'sku') is False
+
+        h5.create_index('/items', 'sku')
+        h5.append_rows('/items', [{'sku': 'B-2', 'missing': 'y'}])
+        h5.reindex('/items', 'sku')
+        h5.reindex('/items')
+
+        assert h5.is_indexed('/items', 'sku') is True
+        assert h5.is_indexed('/items', 'missing') is False
+
+# ** test: append_rows_and_flush_do_not_reindex
+def test_append_rows_and_flush_do_not_reindex(h5_path: Path, monkeypatch) -> None:
+    '''
+    Test that append_rows() and flush() do not call reindex().
+    '''
+    calls = []
+
+    def record_reindex(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SkuTableObject.get_description())
+        h5.create_index('/items', 'sku')
+        monkeypatch.setattr(h5, 'reindex', record_reindex)
+        h5.append_rows('/items', [{'sku': 'B-2', 'missing': 'y'}])
+        h5.flush()
+
+    assert calls == []
+    assert 'reindex' not in inspect.getsource(H5Client.append_rows)
+    assert 'reindex' not in inspect.getsource(H5Client.flush)
+
+# ** test: index_missing_node_raises
+def test_index_missing_node_raises(existing_h5: Path) -> None:
+    '''
+    Test that index operations raise H5_NODE_NOT_FOUND for a missing node.
+    '''
+    with H5Client(existing_h5, mode='a') as h5:
+        for action in (
+            lambda: h5.create_index('/missing', 'sku'),
+            lambda: h5.is_indexed('/missing', 'sku'),
+            lambda: h5.reindex('/missing', 'sku'),
+        ):
+            with pytest.raises(ServiceError) as exc_info:
+                action()
+
+            assert exc_info.value.error_code == H5_NODE_NOT_FOUND_ID
+
+# ** test: index_unopened_raises
+def test_index_unopened_raises(h5_path: Path) -> None:
+    '''
+    Test that index operations raise H5_CONN_NOT_INITIALIZED before open.
+    '''
+    client = H5Client(h5_path, mode='a')
+    for action in (
+        lambda: client.create_index('/items', 'sku'),
+        lambda: client.is_indexed('/items', 'sku'),
+        lambda: client.reindex('/items'),
+    ):
+        with pytest.raises(ServiceError) as exc_info:
+            action()
+
+        assert exc_info.value.error_code == H5_CONN_NOT_INITIALIZED_ID
