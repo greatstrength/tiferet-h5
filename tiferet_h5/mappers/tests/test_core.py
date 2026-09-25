@@ -17,7 +17,7 @@ from tiferet.domain import DomainObject
 from tiferet.mappers import Aggregate
 
 from ..core import NodeObject, TableObject
-from .settings import NodeObjectTestBase, TableObjectTestBase
+from .core import NodeObjectTestBase, TableObjectTestBase
 
 # *** constants
 
