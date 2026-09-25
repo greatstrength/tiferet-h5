@@ -4,7 +4,7 @@
 
 # ** core
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 # ** infra
 import numpy as np
@@ -106,6 +106,121 @@ class MetaNodeObject(NodeObject):
         'to_h5.attrs': {'by_alias': True, 'exclude_none': True},
     }
 
+# ** class: nullable_note_table_object
+class NullableNoteTableObject(TableObject):
+    '''
+    TableObject with one declared nullable string and one ordinary string.
+
+    ``note`` defaults to ``''`` so a dropped ``None`` is visible as an empty
+    string rather than a silent default of ``None``.
+    '''
+
+    # * attribute: name
+    name: str = Field(default='', description='Item name.')
+
+    # * attribute: note
+    note: Optional[str] = Field(default='', description='Optional note.')
+
+    # * attribute: _H5_TYPES
+    _H5_TYPES: ClassVar[Dict[str, Any]] = {
+        'name': tables.StringCol(64),
+        'note': tables.StringCol(128),
+    }
+
+    # * attribute: _NULLABLE_FIELDS
+    _NULLABLE_FIELDS: ClassVar[List[str]] = [
+        'note',
+    ]
+
+# ** class: aliased_nullable_table_object
+class AliasedNullableTableObject(TableObject):
+    '''
+    TableObject whose nullable field is stored under a serialization alias.
+    '''
+
+    # * attribute: service_id
+    service_id: Optional[str] = Field(
+        default='',
+        serialization_alias='svc',
+        validation_alias=AliasChoices('svc', 'service_id'),
+        description='Optional service id; stored as "svc".',
+    )
+
+    # * attribute: label
+    label: str = Field(default='', description='Label.')
+
+    # * attribute: _H5_TYPES
+    _H5_TYPES: ClassVar[Dict[str, Any]] = {
+        'svc': tables.StringCol(64),
+        'label': tables.StringCol(64),
+    }
+
+    # * attribute: _NULLABLE_FIELDS
+    _NULLABLE_FIELDS: ClassVar[List[str]] = [
+        'service_id',
+    ]
+
+# ** class: nullable_note_domain
+class NullableNoteDomain(DomainObject):
+    '''
+    Domain object for nullable mapper ``from_model`` tests.
+    '''
+
+    # * attribute: name
+    name: str = Field(default='', description='Item name.')
+
+    # * attribute: note
+    note: Optional[str] = Field(default='', description='Optional note.')
+
+# ** class: nullable_note_node_object
+class NullableNoteNodeObject(NodeObject):
+    '''
+    NodeObject with one declared nullable string.  The attrs role excludes None.
+    '''
+
+    # * attribute: name
+    name: str = Field(default='', description='Name.')
+
+    # * attribute: note
+    note: Optional[str] = Field(default='', description='Optional note.')
+
+    # * attribute: _ROLES
+    _ROLES: ClassVar[Dict[str, Dict[str, Any]]] = {
+        'to_h5.attrs': {'by_alias': True, 'exclude_none': True},
+    }
+
+    # * attribute: _NULLABLE_FIELDS
+    _NULLABLE_FIELDS: ClassVar[List[str]] = [
+        'note',
+    ]
+
+# ** class: aliased_nullable_node_object
+class AliasedNullableNodeObject(NodeObject):
+    '''
+    NodeObject whose nullable field is stored under a serialization alias.
+    '''
+
+    # * attribute: service_id
+    service_id: Optional[str] = Field(
+        default='',
+        serialization_alias='svc',
+        validation_alias=AliasChoices('svc', 'service_id'),
+        description='Optional service id; stored as "svc".',
+    )
+
+    # * attribute: label
+    label: str = Field(default='', description='Label.')
+
+    # * attribute: _ROLES
+    _ROLES: ClassVar[Dict[str, Dict[str, Any]]] = {
+        'to_h5.attrs': {'by_alias': True, 'exclude_none': True},
+    }
+
+    # * attribute: _NULLABLE_FIELDS
+    _NULLABLE_FIELDS: ClassVar[List[str]] = [
+        'service_id',
+    ]
+
 # *** fixtures
 
 # ** fixture: h5_table
@@ -130,6 +245,30 @@ def aliased_h5_table(tmp_path: Path):
     h5_path = tmp_path / 'aliased.h5'
     h5file = tables.open_file(str(h5_path), mode='w')
     table = h5file.create_table('/', 'items', AliasedTableObject.get_description())
+    yield table
+    h5file.close()
+
+# ** fixture: nullable_h5_table
+@pytest.fixture
+def nullable_h5_table(tmp_path: Path):
+    '''
+    Open a temporary HDF5 file and yield a live nullable-note table.
+    '''
+    h5_path = tmp_path / 'nullable.h5'
+    h5file = tables.open_file(str(h5_path), mode='w')
+    table = h5file.create_table('/', 'items', NullableNoteTableObject.get_description())
+    yield table
+    h5file.close()
+
+# ** fixture: aliased_nullable_h5_table
+@pytest.fixture
+def aliased_nullable_h5_table(tmp_path: Path):
+    '''
+    Open a temporary HDF5 file and yield a live aliased nullable table.
+    '''
+    h5_path = tmp_path / 'aliased-nullable.h5'
+    h5file = tables.open_file(str(h5_path), mode='w')
+    table = h5file.create_table('/', 'items', AliasedNullableTableObject.get_description())
     yield table
     h5file.close()
 
@@ -450,6 +589,148 @@ def test_node_object_round_trip() -> None:
 
     assert restored.name == original.name
     assert restored.description == original.description
+
+# ** test: nullable_row_round_trip
+def test_nullable_row_round_trip(nullable_h5_table) -> None:
+    '''
+    Test that a declared nullable string round-trips None, and an undeclared
+    empty string on the same row stays empty.
+    '''
+    NullableNoteTableObject(name='', note=None).to_row(nullable_h5_table)
+    nullable_h5_table.flush()
+
+    row = list(nullable_h5_table.iterrows())[0]
+    restored = NullableNoteTableObject.from_row(row)
+
+    assert row['note'] == b''
+    assert restored.note is None
+    assert restored.name == ''
+
+# ** test: nullable_empty_string_reads_as_none
+def test_nullable_empty_string_reads_as_none(nullable_h5_table) -> None:
+    '''
+    Test that a declared field stored as '' reads back as None.
+    '''
+    row = nullable_h5_table.row
+    row['name'] = b'Widget'
+    row['note'] = b''
+    row.append()
+    nullable_h5_table.flush()
+
+    restored = NullableNoteTableObject.from_row(list(nullable_h5_table.iterrows())[0])
+
+    assert restored.note is None
+    assert restored.name == 'Widget'
+
+# ** test: undeclared_empty_string_stays_empty
+def test_undeclared_empty_string_stays_empty(h5_table) -> None:
+    '''
+    Test that a class with the default empty list still reads a stored '' as ''.
+    '''
+    row = h5_table.row
+    row['name'] = b''
+    row['score'] = 0
+    row.append()
+    h5_table.flush()
+
+    restored = ItemTableObject.from_row(list(h5_table.iterrows())[0])
+
+    assert restored.name == ''
+    assert TableObject._NULLABLE_FIELDS == []
+    assert NodeObject._NULLABLE_FIELDS == []
+    assert ItemTableObject._NULLABLE_FIELDS == []
+
+# ** test: nullable_aliased_row_round_trip
+def test_nullable_aliased_row_round_trip(aliased_nullable_h5_table) -> None:
+    '''
+    Test that a nullable field listed by its Python name still round-trips None
+    when the HDF5 column is the serialization alias.
+    '''
+    AliasedNullableTableObject(service_id=None, label='').to_row(aliased_nullable_h5_table)
+    aliased_nullable_h5_table.flush()
+
+    row = list(aliased_nullable_h5_table.iterrows())[0]
+    restored = AliasedNullableTableObject.from_row(row)
+
+    assert row['svc'] == b''
+    assert restored.service_id is None
+    assert restored.label == ''
+
+# ** test: from_model_preserves_nullable_none
+def test_from_model_preserves_nullable_none() -> None:
+    '''
+    Test that from_model keeps a declared None instead of the string default.
+    '''
+    table_obj = NullableNoteTableObject.from_model(NullableNoteDomain(name='Widget', note=None))
+    node_obj = NullableNoteNodeObject.from_model(NullableNoteDomain(name='Widget', note=None))
+
+    assert table_obj.note is None
+    assert table_obj.to_primitive()['note'] is None
+    assert node_obj.note is None
+    assert node_obj.to_primitive()['note'] is None
+
+# ** test: nullable_attrs_round_trip
+def test_nullable_attrs_round_trip() -> None:
+    '''
+    Test that to_attrs emits the empty sentinel for a declared None even when
+    the role sets exclude_none, and from_attrs restores None.
+    '''
+    attrs = NullableNoteNodeObject(name='Widget', note=None).to_attrs()
+    restored = NullableNoteNodeObject.from_attrs(attrs)
+
+    assert attrs['note'] == ''
+    assert attrs['name'] == 'Widget'
+    assert restored.note is None
+    assert restored.name == 'Widget'
+
+# ** test: nullable_attrs_empty_string_reads_as_none
+def test_nullable_attrs_empty_string_reads_as_none() -> None:
+    '''
+    Test that a declared attribute stored as '' or b'' reads back as None.
+    '''
+    restored = NullableNoteNodeObject.from_attrs({'name': 'Widget', 'note': ''})
+    restored_bytes = NullableNoteNodeObject.from_attrs({'name': b'Widget', 'note': b''})
+
+    assert restored.note is None
+    assert restored_bytes.note is None
+    assert restored.name == 'Widget'
+
+# ** test: nullable_aliased_attrs_round_trip
+def test_nullable_aliased_attrs_round_trip() -> None:
+    '''
+    Test that a nullable field listed by its Python name round-trips None
+    when the attribute key is the serialization alias.
+    '''
+    attrs = AliasedNullableNodeObject(service_id=None, label='').to_attrs()
+    restored = AliasedNullableNodeObject.from_attrs(attrs)
+
+    assert attrs['svc'] == ''
+    assert 'service_id' not in attrs
+    assert restored.service_id is None
+    assert restored.label == ''
+
+# ** test: nullable_attrs_honors_explicit_exclude
+def test_nullable_attrs_honors_explicit_exclude() -> None:
+    '''
+    Test that an explicit role exclude still omits a nullable field.
+    exclude_none must not drop it; exclude must.
+    '''
+    class ExcludedNoteNode(NullableNoteNodeObject):
+        '''NodeObject that excludes the nullable note from attribute output.'''
+
+        # * attribute: _ROLES
+        _ROLES: ClassVar[Dict[str, Dict[str, Any]]] = {
+            'to_h5.attrs': {
+                'by_alias': True,
+                'exclude_none': True,
+                'exclude': {'note'},
+            },
+        }
+
+    attrs = ExcludedNoteNode(name='Widget', note=None).to_attrs()
+
+    assert 'note' not in attrs
+    assert attrs['name'] == 'Widget'
 
 # ** test: test_harness_item_table
 class TestHarnessItemTable(TableObjectTestBase):
