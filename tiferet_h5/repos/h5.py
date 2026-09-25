@@ -77,3 +77,18 @@ class H5Repository(Service):
             path=Path(self.h5_file),
             mode=mode or self.mode,
         )
+
+    # * method: file_exists
+    def file_exists(self) -> bool:
+        '''
+        Return whether the repository HDF5 path is on disk.
+
+        The check is a filesystem stat. It does not open an ``H5Client``,
+        create the path, or require a ``.h5`` extension.
+
+        :return: True if the path exists, otherwise False.
+        :rtype: bool
+        '''
+
+        # Stat the path without opening or creating it.
+        return Path(self.h5_file).exists()
