@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10"]
-        tiferet-version: ["2.0.3"]
+        tiferet-version: ["2.1.1"]
 
     steps:
       - name: Checkout code
