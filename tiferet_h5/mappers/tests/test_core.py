@@ -543,6 +543,60 @@ def test_verify_schema_string_itemsize_mismatch(h5_table) -> None:
     assert 'name' in mismatches[0]
     assert 'itemsize mismatch' in mismatches[0]
 
+# ** test: schema_fingerprint_is_order_independent
+def test_schema_fingerprint_is_order_independent() -> None:
+    '''
+    Test that schema_fingerprint() is a 12-character hex string and ignores declaration order.
+    '''
+    class NameFirstObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name':  tables.StringCol(64),
+            'score': tables.Float64Col(),
+        }
+
+    class ScoreFirstObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'score': tables.Float64Col(),
+            'name':  tables.StringCol(64),
+        }
+
+    fingerprint = NameFirstObject.schema_fingerprint()
+
+    assert len(fingerprint) == 12
+    assert all(char in '0123456789abcdef' for char in fingerprint)
+    assert fingerprint == ScoreFirstObject.schema_fingerprint()
+
+# ** test: schema_fingerprint_changes_on_width
+def test_schema_fingerprint_changes_on_width() -> None:
+    '''
+    Test that a column rename, type change, or StringCol width change alters the fingerprint.
+    '''
+    class WideNameObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(64),
+        }
+
+    class NarrowNameObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(16),
+        }
+
+    class RenamedObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'label': tables.StringCol(64),
+        }
+
+    class IntNameObject(TableObject):
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.Int32Col(),
+        }
+
+    baseline = WideNameObject.schema_fingerprint()
+
+    assert baseline != NarrowNameObject.schema_fingerprint()
+    assert baseline != RenamedObject.schema_fingerprint()
+    assert baseline != IntNameObject.schema_fingerprint()
+
 # ** test: node_object_to_attrs_applies_alias
 def test_node_object_to_attrs_applies_alias() -> None:
     '''
