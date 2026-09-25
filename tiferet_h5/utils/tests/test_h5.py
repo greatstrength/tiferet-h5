@@ -13,17 +13,24 @@ import tables
 from pydantic import Field
 
 # ** app
-from tiferet import TiferetError
+from tiferet.interfaces import ServiceError
 
-from ...assets import constants as const
 from ...mappers.core import TableObject
-from ..h5 import H5Client
+from ..h5 import (
+    H5_CONN_NOT_INITIALIZED_ID,
+    H5_CONN_NOT_INITIALIZED_MESSAGE,
+    H5_FILE_ALREADY_OPEN_ID,
+    H5_FILE_NOT_FOUND_ID,
+    H5_INVALID_FILE_ID,
+    H5_INVALID_MODE_ID,
+    H5_NODE_NOT_FOUND_ID,
+    H5Client,
+)
 
 # *** constants
 
 # ** constant: h5_extensions
 H5_EXTENSIONS = ['.h5', '.hdf5']
-
 
 # *** classes
 
@@ -43,7 +50,6 @@ class SampleTableObject(TableObject):
         'value': tables.Float64Col(),
     }
 
-
 # *** fixtures
 
 # ** fixture: h5_path
@@ -54,7 +60,6 @@ def h5_path(tmp_path: Path) -> Path:
     '''
     return tmp_path / 'test.h5'
 
-
 # ** fixture: existing_h5
 @pytest.fixture
 def existing_h5(h5_path: Path) -> Path:
@@ -64,7 +69,6 @@ def existing_h5(h5_path: Path) -> Path:
     with H5Client(h5_path, mode='w') as h5:
         h5.create_group('/data')
     return h5_path
-
 
 # ** fixture: h5_with_table
 @pytest.fixture
@@ -80,7 +84,6 @@ def h5_with_table(h5_path: Path) -> Path:
         t.flush()
     return h5_path
 
-
 # *** tests
 
 # ** test: verify_mode_valid
@@ -92,18 +95,17 @@ def test_verify_mode_valid(h5_path: Path, mode: str) -> None:
     client = H5Client(h5_path, mode=mode)
     client.verify_mode()  # must not raise
 
-
 # ** test: verify_mode_invalid
 def test_verify_mode_invalid(h5_path: Path) -> None:
     '''
     Test that verify_mode() raises H5_INVALID_MODE for an unrecognised mode.
     '''
     client = H5Client(h5_path, mode='x')
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.verify_mode()
 
-    assert exc_info.value.error_code == const.H5_INVALID_MODE_ID
-
+    assert exc_info.value.error_code == H5_INVALID_MODE_ID
+    assert exc_info.value.error_code == 'H5_INVALID_MODE'
 
 # ** test: verify_file_read_not_found
 def test_verify_file_read_not_found(tmp_path: Path) -> None:
@@ -111,11 +113,11 @@ def test_verify_file_read_not_found(tmp_path: Path) -> None:
     Test that verify_file() raises H5_FILE_NOT_FOUND when the file is absent in read mode.
     '''
     missing = tmp_path / 'missing.h5'
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(missing, mode='r')
 
-    assert exc_info.value.error_code == const.H5_FILE_NOT_FOUND_ID
-
+    assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
+    assert exc_info.value.error_code == 'H5_FILE_NOT_FOUND'
 
 # ** test: verify_file_read_wrong_extension
 def test_verify_file_read_wrong_extension(tmp_path: Path) -> None:
@@ -124,11 +126,11 @@ def test_verify_file_read_wrong_extension(tmp_path: Path) -> None:
     '''
     bad_ext = tmp_path / 'data.yaml'
     bad_ext.touch()
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(bad_ext, mode='r')
 
-    assert exc_info.value.error_code == const.H5_INVALID_FILE_ID
-
+    assert exc_info.value.error_code == H5_INVALID_FILE_ID
+    assert exc_info.value.error_code == 'H5_INVALID_FILE'
 
 # ** test: verify_file_write_parent_missing
 def test_verify_file_write_parent_missing(tmp_path: Path) -> None:
@@ -136,11 +138,10 @@ def test_verify_file_write_parent_missing(tmp_path: Path) -> None:
     Test that verify_file() raises H5_FILE_NOT_FOUND when the parent dir is absent.
     '''
     nested = tmp_path / 'nonexistent_dir' / 'data.h5'
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         H5Client.verify_file(nested, mode='w')
 
-    assert exc_info.value.error_code == const.H5_FILE_NOT_FOUND_ID
-
+    assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
 
 # ** test: open_file_creates_file
 def test_open_file_creates_file(h5_path: Path) -> None:
@@ -155,7 +156,6 @@ def test_open_file_creates_file(h5_path: Path) -> None:
 
     client.close_file()
 
-
 # ** test: close_file_resets_handle
 def test_close_file_resets_handle(h5_path: Path) -> None:
     '''
@@ -167,7 +167,6 @@ def test_close_file_resets_handle(h5_path: Path) -> None:
 
     assert client.h5file is None
 
-
 # ** test: context_manager_opens_and_closes
 def test_context_manager_opens_and_closes(h5_path: Path) -> None:
     '''
@@ -178,7 +177,6 @@ def test_context_manager_opens_and_closes(h5_path: Path) -> None:
 
     assert h5.h5file is None
 
-
 # ** test: open_file_already_open
 def test_open_file_already_open(h5_path: Path) -> None:
     '''
@@ -186,12 +184,26 @@ def test_open_file_already_open(h5_path: Path) -> None:
     '''
     client = H5Client(h5_path, mode='a')
     client.open_file()
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.open_file()
 
-    assert exc_info.value.error_code == const.H5_FILE_ALREADY_OPEN_ID
+    assert exc_info.value.error_code == H5_FILE_ALREADY_OPEN_ID
+    assert exc_info.value.error_code == 'H5_FILE_ALREADY_OPEN'
     client.close_file()
 
+# ** test: open_file_corrupt_chains_cause
+def test_open_file_corrupt_chains_cause(tmp_path: Path) -> None:
+    '''
+    Test that a failed open raises ServiceError chained to the driver exception.
+    '''
+    bad = tmp_path / 'bad.h5'
+    bad.write_bytes(b'not an hdf5 file')
+    client = H5Client(bad, mode='r')
+    with pytest.raises(ServiceError) as exc_info:
+        client.open_file()
+
+    assert exc_info.value.error_code == H5_FILE_NOT_FOUND_ID
+    assert isinstance(exc_info.value.__cause__, (tables.HDF5ExtError, OSError))
 
 # ** test: operation_before_open_raises
 def test_operation_before_open_raises(h5_path: Path) -> None:
@@ -199,11 +211,12 @@ def test_operation_before_open_raises(h5_path: Path) -> None:
     Test that calling node_exists() before open_file() raises H5_CONN_NOT_INITIALIZED.
     '''
     client = H5Client(h5_path, mode='a')
-    with pytest.raises(TiferetError) as exc_info:
+    with pytest.raises(ServiceError) as exc_info:
         client.node_exists('/')
 
-    assert exc_info.value.error_code == const.H5_CONN_NOT_INITIALIZED_ID
-
+    assert exc_info.value.error_code == H5_CONN_NOT_INITIALIZED_ID
+    assert exc_info.value.error_code == 'H5_CONN_NOT_INITIALIZED'
+    assert exc_info.value.message == H5_CONN_NOT_INITIALIZED_MESSAGE
 
 # ** test: node_exists_true
 def test_node_exists_true(existing_h5: Path) -> None:
@@ -213,7 +226,6 @@ def test_node_exists_true(existing_h5: Path) -> None:
     with H5Client(existing_h5, mode='r') as h5:
         assert h5.node_exists('/data') is True
 
-
 # ** test: node_exists_false
 def test_node_exists_false(existing_h5: Path) -> None:
     '''
@@ -221,7 +233,6 @@ def test_node_exists_false(existing_h5: Path) -> None:
     '''
     with H5Client(existing_h5, mode='r') as h5:
         assert h5.node_exists('/does_not_exist') is False
-
 
 # ** test: create_group
 def test_create_group(h5_path: Path) -> None:
@@ -232,7 +243,6 @@ def test_create_group(h5_path: Path) -> None:
         h5.create_group('/features')
         assert h5.node_exists('/features') is True
 
-
 # ** test: create_group_nested
 def test_create_group_nested(h5_path: Path) -> None:
     '''
@@ -241,7 +251,6 @@ def test_create_group_nested(h5_path: Path) -> None:
     with H5Client(h5_path, mode='w') as h5:
         h5.create_group('/features/calc')
         assert h5.node_exists('/features/calc') is True
-
 
 # ** test: get_group_found
 def test_get_group_found(existing_h5: Path) -> None:
@@ -252,18 +261,18 @@ def test_get_group_found(existing_h5: Path) -> None:
         group = h5.get_group('/data')
         assert group is not None
 
-
 # ** test: get_group_not_found
 def test_get_group_not_found(existing_h5: Path) -> None:
     '''
     Test that get_group() raises H5_NODE_NOT_FOUND for a missing path.
     '''
     with H5Client(existing_h5, mode='r') as h5:
-        with pytest.raises(TiferetError) as exc_info:
+        with pytest.raises(ServiceError) as exc_info:
             h5.get_group('/does_not_exist')
 
-    assert exc_info.value.error_code == const.H5_NODE_NOT_FOUND_ID
-
+    assert exc_info.value.error_code == H5_NODE_NOT_FOUND_ID
+    assert exc_info.value.error_code == 'H5_NODE_NOT_FOUND'
+    assert isinstance(exc_info.value.__cause__, tables.NoSuchNodeError)
 
 # ** test: create_table
 def test_create_table(h5_path: Path) -> None:
@@ -275,7 +284,6 @@ def test_create_table(h5_path: Path) -> None:
         assert t is not None
         assert set(t.colnames) == {'name', 'value'}
 
-
 # ** test: get_or_create_table_creates
 def test_get_or_create_table_creates(h5_path: Path) -> None:
     '''
@@ -286,7 +294,6 @@ def test_get_or_create_table_creates(h5_path: Path) -> None:
         assert t is not None
         assert h5.node_exists('/items') is True
 
-
 # ** test: get_or_create_table_gets_existing
 def test_get_or_create_table_gets_existing(h5_with_table: Path) -> None:
     '''
@@ -295,7 +302,6 @@ def test_get_or_create_table_gets_existing(h5_with_table: Path) -> None:
     with H5Client(h5_with_table, mode='a') as h5:
         t = h5.get_or_create_table('/items', SampleTableObject.get_description())
         assert t.nrows == 3
-
 
 # ** test: append_rows_and_read_all
 def test_append_rows_and_read_all(h5_path: Path) -> None:
@@ -316,7 +322,6 @@ def test_append_rows_and_read_all(h5_path: Path) -> None:
     assert rows[0]['name'] == 'Alpha'
     assert rows[1]['name'] == 'Beta'
 
-
 # ** test: read_rows_sliced
 def test_read_rows_sliced(h5_with_table: Path) -> None:
     '''
@@ -328,7 +333,6 @@ def test_read_rows_sliced(h5_with_table: Path) -> None:
     assert len(rows) == 2
     assert rows[0]['name'] == 'Beta'
     assert rows[1]['name'] == 'Gamma'
-
 
 # ** test: read_rows_condition
 def test_read_rows_condition(h5_with_table: Path) -> None:
@@ -342,7 +346,6 @@ def test_read_rows_condition(h5_with_table: Path) -> None:
     names = {r['name'] for r in rows}
     assert names == {'Beta', 'Gamma'}
 
-
 # ** test: query
 def test_query(h5_with_table: Path) -> None:
     '''
@@ -353,7 +356,6 @@ def test_query(h5_with_table: Path) -> None:
 
     assert len(rows) == 1
     assert rows[0]['name'] == 'Alpha'
-
 
 # ** test: remove_rows
 def test_remove_rows(h5_with_table: Path) -> None:
@@ -371,7 +373,6 @@ def test_remove_rows(h5_with_table: Path) -> None:
     assert len(rows) == 1
     assert rows[0]['name'] == 'Gamma'
 
-
 # ** test: create_and_get_array
 def test_create_and_get_array(h5_path: Path) -> None:
     '''
@@ -388,7 +389,6 @@ def test_create_and_get_array(h5_path: Path) -> None:
 
     np.testing.assert_array_equal(result, data)
 
-
 # ** test: set_and_get_node_attr
 def test_set_and_get_node_attr(h5_path: Path) -> None:
     '''
@@ -403,7 +403,6 @@ def test_set_and_get_node_attr(h5_path: Path) -> None:
 
     assert val == '1.0'
     assert isinstance(val, str)
-
 
 # ** test: get_node_attrs_excludes_system_attrs
 def test_get_node_attrs_excludes_system_attrs(h5_path: Path) -> None:
@@ -425,7 +424,6 @@ def test_get_node_attrs_excludes_system_attrs(h5_path: Path) -> None:
     assert 'TITLE' not in attrs
     assert 'VERSION' not in attrs
 
-
 # ** test: get_node_attrs_normalizes_numpy
 def test_get_node_attrs_normalizes_numpy(h5_path: Path) -> None:
     '''
@@ -442,18 +440,17 @@ def test_get_node_attrs_normalizes_numpy(h5_path: Path) -> None:
     assert attrs['count'] == 42
     assert isinstance(attrs['count'], int)
 
-
 # ** test: get_node_attr_not_found
 def test_get_node_attr_not_found(existing_h5: Path) -> None:
     '''
     Test that get_group() raises H5_NODE_NOT_FOUND for a missing node.
     '''
     with H5Client(existing_h5, mode='r') as h5:
-        with pytest.raises(TiferetError) as exc_info:
+        with pytest.raises(ServiceError) as exc_info:
             h5.get_node_attrs('/missing')
 
-    assert exc_info.value.error_code == const.H5_NODE_NOT_FOUND_ID
-
+    assert exc_info.value.error_code == H5_NODE_NOT_FOUND_ID
+    assert isinstance(exc_info.value.__cause__, tables.NoSuchNodeError)
 
 # ** test: flush_does_not_close
 def test_flush_does_not_close(h5_path: Path) -> None:
