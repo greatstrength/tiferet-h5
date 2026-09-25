@@ -3,6 +3,7 @@
 # *** imports
 
 # ** core
+import hashlib
 from typing import Any, ClassVar, Dict, List, Optional, Type
 
 # ** infra
@@ -235,6 +236,8 @@ class TableObject(DomainObject):
     * ``verify_schema(table)`` -- classmethod; returns mismatch strings for a
       missing declared column, an undeclared live column, a PyTables type
       mismatch, or a ``StringCol`` itemsize mismatch.  Does not raise.
+    * ``schema_fingerprint()`` -- classmethod; returns a stable 12-character
+      marker derived from ``_H5_TYPES``.  Does not write the marker.
     '''
 
     # * attribute: model_config
@@ -554,6 +557,31 @@ class TableObject(DomainObject):
 
         # Return all collected mismatch descriptions.
         return mismatches
+
+    # * method: schema_fingerprint (static)
+    @classmethod
+    def schema_fingerprint(cls) -> str:
+        '''
+        Return a stable marker for the declared ``_H5_TYPES`` schema.
+
+        The marker changes when a column name, PyTables type, or string width
+        changes, and ignores declaration order.  It is derived from the
+        declaration and is not written to a file.
+
+        :return: The first 12 hexadecimal characters of the schema digest.
+        :rtype: str
+        '''
+
+        # Build one canonical part per declared column, sorted by name.
+        parts = []
+        for name, col in sorted(cls._H5_TYPES.items()):
+            itemsize = getattr(col, 'itemsize', '')
+            parts.append(f'{name}:{col.type}:{itemsize}')
+
+        # Hash the joined schema and return the short hex prefix.
+        canonical = '|'.join(parts)
+        digest = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+        return digest[:12]
 
 # ** class: node_object
 class NodeObject(TransferObject):

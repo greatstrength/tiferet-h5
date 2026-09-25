@@ -50,6 +50,9 @@ H5_WRITE_FAILED_ID = 'H5_WRITE_FAILED'
 # ** constant: h5_index_failed_id
 H5_INDEX_FAILED_ID = 'H5_INDEX_FAILED'
 
+# ** constant: h5_schema_mismatch_id
+H5_SCHEMA_MISMATCH_ID = 'H5_SCHEMA_MISMATCH'
+
 # *** constants (messages)
 
 # ** constant: h5_conn_not_initialized_message
@@ -614,6 +617,54 @@ class H5Client(FileLoader, H5Service):
 
         # Create and return the table without recreating an existing one.
         return self.create_table(path, description, title=title, **kwargs)
+
+    # * method: assert_schema
+    # >> see: @guides/utils/h5.md#h5client-assert-schema
+    def assert_schema(self,
+            path: str,
+            table_cls: type,
+            check_version: bool = True,
+        ) -> None:
+        '''
+        Verify the table at ``path`` against a ``TableObject`` declaration.
+
+        :param path: Absolute HDF5 path for the table.
+        :type path: str
+        :param table_cls: ``TableObject`` subclass declaring the expected schema.
+        :type table_cls: type
+        :param check_version: Whether to compare a stored ``schema_version``.
+        :type check_version: bool
+        :raises ServiceError: If the file is not open, the node is absent, or
+            the schema does not match.
+        '''
+
+        # Load the table. An unopened client or missing node raises here.
+        table = self.get_table(path)
+
+        # Collect column drift. The mapper reports mismatches and does not raise.
+        mismatches = table_cls.verify_schema(table)
+
+        # Compare a stored fingerprint only when asked and the attribute exists.
+        if check_version and 'schema_version' in table._v_attrs._v_attrnamesuser:
+            stored_version = table._v_attrs['schema_version']
+            if isinstance(stored_version, bytes):
+                stored_version = stored_version.decode('utf-8')
+            expected_version = table_cls.schema_fingerprint()
+            if stored_version != expected_version:
+                mismatches.append(
+                    f'schema_version at {path} is "{stored_version}", '
+                    f'expected "{expected_version}".'
+                )
+
+        # Raise when any column or version mismatch was collected.
+        if mismatches:
+            ServiceError.raise_for(
+                self,
+                H5_SCHEMA_MISMATCH_ID,
+                message=f'Schema mismatch at {path}: {"; ".join(mismatches)}',
+                path=path,
+                mismatches=mismatches,
+            )
 
     # * method: append_rows
     def append_rows(self,

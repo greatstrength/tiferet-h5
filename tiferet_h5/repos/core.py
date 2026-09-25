@@ -8,6 +8,11 @@ from typing import ClassVar, Iterator, List, Optional, Type
 # ** app
 from ..mappers import TableObject
 
+# *** constants
+
+# ** constant: schema_version_attr
+SCHEMA_VERSION_ATTR = 'schema_version'
+
 # *** classes
 
 # ** class: table_repository
@@ -17,7 +22,8 @@ class TableRepository:
 
     Compose this mixin beside ``H5Repository`` and declare ``table_cls`` and
     ``table_path``. Missing-file reads stay empty, and schema checks run only
-    when ``verify`` is called.
+    when ``verify`` is called. The first create stamps ``schema_version``
+    unless ``stamp_schema_version`` is false.
     '''
 
     # * attribute: table_cls
@@ -25,6 +31,9 @@ class TableRepository:
 
     # * attribute: table_path
     table_path: ClassVar[str] = ''
+
+    # * attribute: stamp_schema_version
+    stamp_schema_version: ClassVar[bool] = True
 
     # * method: resolve_table_path
     def resolve_table_path(self, **path_kwargs) -> str:
@@ -52,8 +61,10 @@ class TableRepository:
         '''
         Append one table object as a new row.
 
-        Creates the table when the node is absent. Does not check the live
-        schema; call ``verify`` for that.
+        Creates the table when the node is absent. On that first create, and
+        only when ``stamp_schema_version`` is true, writes ``schema_version``
+        from ``table_cls.schema_fingerprint()``. A later save does not rewrite
+        it. Does not check the live schema; call ``verify`` for that.
 
         :param obj: The table object to append.
         :type obj: TableObject
@@ -64,9 +75,23 @@ class TableRepository:
         # Resolve the table path from class state and caller kwargs.
         path = self.resolve_table_path(**path_kwargs)
 
-        # Create the table when absent, append one row, and flush.
+        # Create the table when absent, stamp once, append one row, and flush.
         with self.client() as h5:
+            # Record whether this save is creating the table.
+            created = not h5.node_exists(path)
+
+            # Open the existing table or create it from the declared schema.
             table = h5.get_or_create_table(path, self.table_cls.get_description())
+
+            # Stamp the fingerprint only on the create, and only when enabled.
+            if created and self.stamp_schema_version:
+                h5.set_node_attr(
+                    path,
+                    SCHEMA_VERSION_ATTR,
+                    self.table_cls.schema_fingerprint(),
+                )
+
+            # Append the row and flush the table.
             obj.to_row(table)
             table.flush()
 

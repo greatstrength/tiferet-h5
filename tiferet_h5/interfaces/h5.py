@@ -144,6 +144,25 @@ class H5Service(FileService):
         '''
         raise NotImplementedError()
 
+    # * method: assert_schema
+    @abstractmethod
+    def assert_schema(self,
+            path: str,
+            table_cls: type,
+            check_version: bool = True,
+        ) -> None:
+        '''
+        Verify the table at ``path`` against a ``TableObject`` declaration.
+
+        :param path: Absolute HDF5 path for the table.
+        :type path: str
+        :param table_cls: ``TableObject`` subclass declaring the expected schema.
+        :type table_cls: type
+        :param check_version: Whether to compare a stored ``schema_version``.
+        :type check_version: bool
+        '''
+        raise NotImplementedError()
+
     # * method: append_rows
     @abstractmethod
     def append_rows(self,
