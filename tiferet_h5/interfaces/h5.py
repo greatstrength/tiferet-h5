@@ -16,9 +16,10 @@ class H5Service(FileService):
     '''
     Service contract for HDF5 file operations via PyTables.
 
-    Extends ``FileService`` with group, table, array, and attribute operations
-    that map to the hierarchical structure of an HDF5 file.  All methods
-    operate on the open file handle established by ``open_file`` / ``__enter__``.
+    Extends ``FileService`` with group, table, index, array, and attribute
+    operations that map to the hierarchical structure of an HDF5 file.  All
+    methods operate on the open file handle established by ``open_file`` /
+    ``__enter__``.
     '''
 
     # * method: flush
@@ -353,5 +354,51 @@ class H5Service(FileService):
         :type path: str
         :return: All node attributes as a plain Python dict.
         :rtype: Dict[str, Any]
+        '''
+        raise NotImplementedError()
+
+    # * method: create_index
+    @abstractmethod
+    def create_index(self, path: str, column: str, **kwargs) -> None:
+        '''
+        Create a fully sorted CSI index on ``column`` of the table at ``path``.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of the column to index.
+        :type column: str
+        :param kwargs: Additional kwargs forwarded to the index builder.
+        :type kwargs: dict
+        '''
+        raise NotImplementedError()
+
+    # * method: is_indexed
+    @abstractmethod
+    def is_indexed(self, path: str, column: str) -> bool:
+        '''
+        Return whether ``column`` of the table at ``path`` currently has an index.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of the column to check.
+        :type column: str
+        :return: True if the column is indexed, otherwise False.
+        :rtype: bool
+        '''
+        raise NotImplementedError()
+
+    # * method: reindex
+    @abstractmethod
+    def reindex(self, path: str, column: Optional[str] = None) -> None:
+        '''
+        Recompute an existing column index, or every indexed column on the table.
+
+        When ``column`` was never indexed, the call raises rather than no-opping.
+        When ``column`` is omitted, every currently indexed column is recomputed.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Column to reindex.  Omit to reindex every indexed column.
+        :type column: Optional[str]
         '''
         raise NotImplementedError()

@@ -47,6 +47,9 @@ H5_QUERY_FAILED_ID = 'H5_QUERY_FAILED'
 # ** constant: h5_write_failed_id
 H5_WRITE_FAILED_ID = 'H5_WRITE_FAILED'
 
+# ** constant: h5_index_failed_id
+H5_INDEX_FAILED_ID = 'H5_INDEX_FAILED'
+
 # *** constants (messages)
 
 # ** constant: h5_conn_not_initialized_message
@@ -1247,5 +1250,249 @@ class H5Client(FileLoader, H5Service):
                 H5_NODE_NOT_FOUND_ID,
                 message=f'Node not found at path: {path}.',
                 cause=e,
+                path=path,
+            )
+
+    # * method: create_index
+    def create_index(self, path: str, column: str, **kwargs) -> None:
+        '''
+        Create a fully sorted CSI index on ``column`` of the table at ``path``.
+
+        Keyword arguments are forwarded to ``Column.create_csindex``.  This
+        method does not opt query or removal into index use; those methods keep
+        their existing condition evaluation.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of the column to index.
+        :type column: str
+        :param kwargs: Additional kwargs forwarded to the index builder.
+        :type kwargs: dict
+        :raises ServiceError: If the file is not open, the node is absent,
+            or index creation fails.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(
+                self,
+                H5_CONN_NOT_INITIALIZED_ID,
+                message=H5_CONN_NOT_INITIALIZED_MESSAGE,
+            )
+
+        try:
+
+            # Retrieve the target table and column.
+            table = self.h5file.get_node(path)
+            col = getattr(table.cols, column)
+
+        except tables.NoSuchNodeError as e:
+
+            # Raise a structured error for missing nodes.
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                message=f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        except AttributeError as e:
+
+            # Raise a structured error when the column is absent.
+            ServiceError.raise_for(
+                self,
+                H5_INDEX_FAILED_ID,
+                message=f'Column "{column}" not found on table at {path}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+                column=column,
+            )
+
+        try:
+
+            # Create the fully sorted index and forward builder options.
+            col.create_csindex(**kwargs)
+
+        except Exception as e:
+
+            # Wrap builder failures, including an already-indexed column.
+            ServiceError.raise_for(
+                self,
+                H5_INDEX_FAILED_ID,
+                message=f'Failed to create index on column "{column}" at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+                column=column,
+            )
+
+    # * method: is_indexed
+    def is_indexed(self, path: str, column: str) -> bool:
+        '''
+        Return whether ``column`` of the table at ``path`` currently has an index.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Name of the column to check.
+        :type column: str
+        :return: True if the column is indexed, otherwise False.
+        :rtype: bool
+        :raises ServiceError: If the file is not open or the node or column
+            is absent.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(
+                self,
+                H5_CONN_NOT_INITIALIZED_ID,
+                message=H5_CONN_NOT_INITIALIZED_MESSAGE,
+            )
+
+        try:
+
+            # Retrieve the target table and column.
+            table = self.h5file.get_node(path)
+            col = getattr(table.cols, column)
+
+        except tables.NoSuchNodeError as e:
+
+            # Raise a structured error for missing nodes.
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                message=f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        except AttributeError as e:
+
+            # Raise a structured error when the column is absent.
+            ServiceError.raise_for(
+                self,
+                H5_INDEX_FAILED_ID,
+                message=f'Column "{column}" not found on table at {path}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+                column=column,
+            )
+
+        # Return the column's current indexed state.
+        return col.is_indexed
+
+    # * method: reindex
+    def reindex(self, path: str, column: Optional[str] = None) -> None:
+        '''
+        Recompute an existing column index, or every indexed column on the table.
+
+        Reindexing is explicit.  ``append_rows`` and ``flush`` do not call this
+        method.  A named column that was never indexed raises rather than
+        no-opping.  Omitting ``column`` recomputes only columns that already
+        have an index.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param column: Column to reindex.  Omit to reindex every indexed column.
+        :type column: Optional[str]
+        :raises ServiceError: If the file is not open, the node is absent,
+            or the named column is not indexed.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(
+                self,
+                H5_CONN_NOT_INITIALIZED_ID,
+                message=H5_CONN_NOT_INITIALIZED_MESSAGE,
+            )
+
+        try:
+
+            # Retrieve the target table.
+            table = self.h5file.get_node(path)
+
+        except tables.NoSuchNodeError as e:
+
+            # Raise a structured error for missing nodes.
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                message=f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        # Recompute one column that must already be indexed.
+        if column is not None:
+            try:
+
+                # Resolve the named column.
+                col = getattr(table.cols, column)
+
+            except AttributeError as e:
+
+                # Raise a structured error when the column is absent.
+                ServiceError.raise_for(
+                    self,
+                    H5_INDEX_FAILED_ID,
+                    message=f'Column "{column}" not found on table at {path}.',
+                    cause=e,
+                    original_error=str(e),
+                    path=path,
+                    column=column,
+                )
+
+            # Do not no-op a column that was never indexed.
+            if not col.is_indexed:
+                ServiceError.raise_for(
+                    self,
+                    H5_INDEX_FAILED_ID,
+                    message=(
+                        f'Column "{column}" at {path} is not indexed; '
+                        'call create_index() first.'
+                    ),
+                    path=path,
+                    column=column,
+                )
+
+            try:
+
+                # Recompute the existing column index.
+                col.reindex()
+
+            except Exception as e:
+
+                # Wrap driver failures while rebuilding the column index.
+                ServiceError.raise_for(
+                    self,
+                    H5_INDEX_FAILED_ID,
+                    message=f'Failed to reindex column "{column}" at {path}: {e}.',
+                    cause=e,
+                    original_error=str(e),
+                    path=path,
+                    column=column,
+                )
+
+            return
+
+        try:
+
+            # Recompute every currently indexed column.  Unindexed columns stay
+            # unindexed.
+            table.reindex()
+
+        except Exception as e:
+
+            # Wrap driver failures while rebuilding table indexes.
+            ServiceError.raise_for(
+                self,
+                H5_INDEX_FAILED_ID,
+                message=f'Failed to reindex table at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
                 path=path,
             )
