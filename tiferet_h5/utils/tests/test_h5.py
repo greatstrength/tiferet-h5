@@ -29,6 +29,7 @@ from ..h5 import (
     H5_INVALID_FILE_ID,
     H5_INVALID_MODE_ID,
     H5_NODE_NOT_FOUND_ID,
+    H5_SCHEMA_MISMATCH_ID,
     H5Client,
     normalize_row,
 )
@@ -717,3 +718,183 @@ def test_index_unopened_raises(h5_path: Path) -> None:
             action()
 
         assert exc_info.value.error_code == H5_CONN_NOT_INITIALIZED_ID
+
+# ** test: assert_schema_signature
+def test_assert_schema_signature() -> None:
+    '''
+    Test that H5Service and H5Client expose assert_schema and the mismatch code.
+    '''
+    assert H5_SCHEMA_MISMATCH_ID == 'H5_SCHEMA_MISMATCH'
+
+    for cls in (H5Service, H5Client):
+        signature = inspect.signature(cls.assert_schema)
+
+        assert list(signature.parameters) == ['self', 'path', 'table_cls', 'check_version']
+        assert signature.parameters['check_version'].default is True
+        assert signature.return_annotation is None
+
+    assert 'assert_schema' not in inspect.getsource(H5Client.get_table)
+    assert 'assert_schema' not in inspect.getsource(H5Client.get_or_create_table)
+
+# ** test: assert_schema_missing_column
+def test_assert_schema_missing_column(h5_with_table: Path) -> None:
+    '''
+    Test that a declared column absent from the live table raises H5_SCHEMA_MISMATCH.
+    '''
+    class MissingColumnTable(TableObject):
+        '''Declares a column the live table does not have.'''
+
+        name: str = Field(default='')
+        value: float = Field(default=0.0)
+        note: str = Field(default='')
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(128),
+            'value': tables.Float64Col(),
+            'note': tables.StringCol(32),
+        }
+
+    with H5Client(h5_with_table, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.assert_schema('/items', MissingColumnTable)
+
+    assert exc_info.value.error_code == H5_SCHEMA_MISMATCH_ID
+    assert exc_info.value.error_code == 'H5_SCHEMA_MISMATCH'
+    assert exc_info.value.kwargs['path'] == '/items'
+    assert any('note' in mismatch for mismatch in exc_info.value.kwargs['mismatches'])
+
+# ** test: assert_schema_extra_column
+def test_assert_schema_extra_column(h5_with_table: Path) -> None:
+    '''
+    Test that a live column absent from the declaration raises H5_SCHEMA_MISMATCH.
+    '''
+    class NameOnlyTable(TableObject):
+        '''Omits a column that is present on the live table.'''
+
+        name: str = Field(default='')
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(128),
+        }
+
+    with H5Client(h5_with_table, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.assert_schema('/items', NameOnlyTable)
+
+    assert exc_info.value.error_code == H5_SCHEMA_MISMATCH_ID
+    assert any('value' in mismatch for mismatch in exc_info.value.kwargs['mismatches'])
+
+# ** test: assert_schema_type_mismatch
+def test_assert_schema_type_mismatch(h5_with_table: Path) -> None:
+    '''
+    Test that a PyTables type mismatch raises H5_SCHEMA_MISMATCH.
+    '''
+    class IntValueTable(TableObject):
+        '''Declares value as an integer column.'''
+
+        name: str = Field(default='')
+        value: int = Field(default=0)
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(128),
+            'value': tables.Int64Col(),
+        }
+
+    with H5Client(h5_with_table, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.assert_schema('/items', IntValueTable)
+
+    assert exc_info.value.error_code == H5_SCHEMA_MISMATCH_ID
+    assert any('type mismatch' in mismatch for mismatch in exc_info.value.kwargs['mismatches'])
+
+# ** test: assert_schema_width_mismatch
+def test_assert_schema_width_mismatch(h5_with_table: Path) -> None:
+    '''
+    Test that a StringCol width mismatch raises H5_SCHEMA_MISMATCH.
+    '''
+    class NarrowNameTable(TableObject):
+        '''Declares a narrower string column than the live table.'''
+
+        name: str = Field(default='')
+        value: float = Field(default=0.0)
+        _H5_TYPES: ClassVar[Dict[str, Any]] = {
+            'name': tables.StringCol(32),
+            'value': tables.Float64Col(),
+        }
+
+    with H5Client(h5_with_table, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.assert_schema('/items', NarrowNameTable)
+
+    assert exc_info.value.error_code == H5_SCHEMA_MISMATCH_ID
+    assert any('itemsize' in mismatch for mismatch in exc_info.value.kwargs['mismatches'])
+
+# ** test: assert_schema_version_mismatch
+def test_assert_schema_version_mismatch(h5_path: Path) -> None:
+    '''
+    Test that a stored schema_version differing from the fingerprint is a mismatch.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SampleTableObject.get_description())
+        h5.get_table('/items')._v_attrs['schema_version'] = b'stale-fingerprint'
+
+    with H5Client(h5_path, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.assert_schema('/items', SampleTableObject)
+
+    assert exc_info.value.error_code == H5_SCHEMA_MISMATCH_ID
+    assert any('schema_version' in mismatch for mismatch in exc_info.value.kwargs['mismatches'])
+
+# ** test: assert_schema_missing_version_passes
+def test_assert_schema_missing_version_passes(h5_with_table: Path) -> None:
+    '''
+    Test that a missing schema_version attribute is not a mismatch.
+    '''
+    with H5Client(h5_with_table, mode='r') as h5:
+        h5.assert_schema('/items', SampleTableObject)
+
+# ** test: assert_schema_check_version_false
+def test_assert_schema_check_version_false(h5_path: Path) -> None:
+    '''
+    Test that check_version=False does not compare schema_version.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_table('/items', SampleTableObject.get_description())
+        h5.set_node_attr('/items', 'schema_version', 'stale-fingerprint')
+
+    with H5Client(h5_path, mode='r') as h5:
+        h5.assert_schema('/items', SampleTableObject, check_version=False)
+
+# ** test: get_table_does_not_assert_schema
+def test_get_table_does_not_assert_schema(h5_with_table: Path) -> None:
+    '''
+    Test that get_table and get_or_create_table succeed without calling assert_schema.
+    '''
+    with H5Client(h5_with_table, mode='a') as h5:
+        table = h5.get_table('/items')
+        created = h5.get_or_create_table(
+            '/items',
+            SampleTableObject.get_description(),
+        )
+
+    assert table is not None
+    assert created is not None
+
+# ** test: assert_schema_unopened
+def test_assert_schema_unopened(h5_path: Path) -> None:
+    '''
+    Test that assert_schema() raises H5_CONN_NOT_INITIALIZED before open.
+    '''
+    client = H5Client(h5_path, mode='a')
+    with pytest.raises(ServiceError) as exc_info:
+        client.assert_schema('/items', SampleTableObject)
+
+    assert exc_info.value.error_code == H5_CONN_NOT_INITIALIZED_ID
+
+# ** test: assert_schema_missing_node
+def test_assert_schema_missing_node(existing_h5: Path) -> None:
+    '''
+    Test that assert_schema() raises H5_NODE_NOT_FOUND for a missing node.
+    '''
+    with H5Client(existing_h5, mode='r') as h5:
+        with pytest.raises(ServiceError) as exc_info:
+            h5.assert_schema('/missing', SampleTableObject)
+
+    assert exc_info.value.error_code == H5_NODE_NOT_FOUND_ID
