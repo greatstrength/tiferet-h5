@@ -5,7 +5,7 @@
 # ** core
 import inspect
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Iterator
+from typing import Any, ClassVar, Dict, Iterator, Optional
 
 # ** infra
 import pytest
@@ -49,6 +49,15 @@ class ItemTableRepository(TableRepository, H5Repository):
 
     # * attribute: table_path
     table_path: ClassVar[str] = '/items'
+
+# ** class: compressed_item_repository
+class CompressedItemRepository(ItemTableRepository):
+    '''
+    Item repository that applies a filter policy when the table is created.
+    '''
+
+    # * attribute: filters
+    filters: ClassVar[Optional[tables.Filters]] = tables.Filters(complevel=1)
 
 # ** class: grouped_item_repository
 class GroupedItemRepository(TableRepository, H5Repository):
@@ -177,16 +186,67 @@ def test_table_repository_verify_is_opt_in(
     repo.verify()
     assert calls == [('/items', ItemTableObject)]
 
-# ** test: table_repository_save_omits_filters
-def test_table_repository_save_omits_filters() -> None:
+# ** test: table_repository_save_forwards_filters_and_stamps
+def test_table_repository_save_forwards_filters_and_stamps() -> None:
     '''
-    Test that save does not reference filters or assert_schema.
+    Test that save forwards filters and still stamps schema_version on create.
     '''
 
     source = inspect.getsource(TableRepository.save)
 
-    assert 'filters' not in source
+    assert 'filters=self.filters' in source
+    assert 'SCHEMA_VERSION_ATTR' in source
+    assert 'stamp_schema_version' in source
     assert 'assert_schema' not in source
+    assert 'complib' not in source
+    assert 'complevel' not in source
+
+# ** test: save_forwards_repository_filters
+def test_save_forwards_repository_filters(
+        h5_path: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+    '''
+    Test that a subclass filter policy is stored on a newly created table.
+    '''
+
+    captured = []
+    original = H5Client.get_or_create_table
+
+    # Record the filters object passed into table creation.
+    def spy(self, path, description, title='', filters=None, **kwargs):
+        captured.append(filters)
+        return original(
+            self,
+            path,
+            description,
+            title=title,
+            filters=filters,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(H5Client, 'get_or_create_table', spy)
+
+    # The base default stays None and is forwarded as None.
+    assert TableRepository.filters is None
+    assert ItemTableRepository.filters is None
+    ItemTableRepository(h5_file=h5_path).save(ItemTableObject(name='Plain', value=1.0))
+
+    # A subclass policy is stored on the created table.
+    compressed_path = str(Path(h5_path).with_name('compressed.h5'))
+    CompressedItemRepository(h5_file=compressed_path).save(
+        ItemTableObject(name='Widget', value=1.5),
+    )
+
+    assert captured[0] is None
+    assert captured[1] is CompressedItemRepository.filters
+    assert captured[1].complevel == 1
+
+    with H5Client(h5_path, mode='r') as h5:
+        assert h5.get_table('/items').filters.complevel == 0
+
+    with H5Client(compressed_path, mode='r') as h5:
+        assert h5.get_table('/items').filters.complevel == 1
 
 # ** test: save_stamps_schema_version_once
 def test_save_stamps_schema_version_once(

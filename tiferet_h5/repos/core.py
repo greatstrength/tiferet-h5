@@ -5,6 +5,9 @@
 # ** core
 from typing import ClassVar, Iterator, List, Optional, Type
 
+# ** infra
+import tables
+
 # ** app
 from ..mappers import TableObject
 
@@ -21,8 +24,9 @@ class TableRepository:
     Shared open, append, and read sequence for columnar HDF5 repositories.
 
     Compose this mixin beside ``H5Repository`` and declare ``table_cls`` and
-    ``table_path``. Missing-file reads stay empty, and schema checks run only
-    when ``verify`` is called. The first create stamps ``schema_version``
+    ``table_path``. ``filters`` is the create-time compression policy.
+    Missing-file reads stay empty, and schema checks run only when
+    ``verify`` is called. The first create stamps ``schema_version``
     unless ``stamp_schema_version`` is false.
     '''
 
@@ -34,6 +38,9 @@ class TableRepository:
 
     # * attribute: stamp_schema_version
     stamp_schema_version: ClassVar[bool] = True
+
+    # * attribute: filters
+    filters: ClassVar[Optional[tables.Filters]] = None
 
     # * method: resolve_table_path
     def resolve_table_path(self, **path_kwargs) -> str:
@@ -61,10 +68,12 @@ class TableRepository:
         '''
         Append one table object as a new row.
 
-        Creates the table when the node is absent. On that first create, and
-        only when ``stamp_schema_version`` is true, writes ``schema_version``
-        from ``table_cls.schema_fingerprint()``. A later save does not rewrite
-        it. Does not check the live schema; call ``verify`` for that.
+        Creates the table when the node is absent and forwards ``filters``
+        only to that create. On that first create, and only when
+        ``stamp_schema_version`` is true, writes ``schema_version`` from
+        ``table_cls.schema_fingerprint()``. A later save does not rewrite
+        the stamp or an existing table's compression. Does not check the
+        live schema; call ``verify`` for that.
 
         :param obj: The table object to append.
         :type obj: TableObject
@@ -76,12 +85,17 @@ class TableRepository:
         path = self.resolve_table_path(**path_kwargs)
 
         # Create the table when absent, stamp once, append one row, and flush.
+        # filters is forwarded only to table creation, not to the row append.
         with self.client() as h5:
             # Record whether this save is creating the table.
             created = not h5.node_exists(path)
 
             # Open the existing table or create it from the declared schema.
-            table = h5.get_or_create_table(path, self.table_cls.get_description())
+            table = h5.get_or_create_table(
+                path,
+                self.table_cls.get_description(),
+                filters=self.filters,
+            )
 
             # Stamp the fingerprint only on the create, and only when enabled.
             if created and self.stamp_schema_version:
