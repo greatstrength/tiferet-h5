@@ -5,17 +5,17 @@
 # ** core
 import inspect
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Iterator, Optional
+from typing import Any, ClassVar, Dict, Iterator, List, Optional
 
 # ** infra
 import pytest
 import tables
-from pydantic import Field
+from pydantic import AliasChoices, Field
 
 # ** app
-from ...mappers import TableObject
+from ...mappers import NodeObject, TableObject
 from ...utils import H5Client
-from ..core import SCHEMA_VERSION_ATTR, TableRepository
+from ..core import SCHEMA_VERSION_ATTR, NodeRepository, TableRepository
 from ..h5 import H5Repository
 
 # *** classes
@@ -80,6 +80,60 @@ class UnstampedItemRepository(ItemTableRepository):
     # * attribute: stamp_schema_version
     stamp_schema_version: ClassVar[bool] = False
 
+# ** class: meta_node_object
+class MetaNodeObject(NodeObject):
+    '''
+    Minimal node object for repository mixin tests.
+    '''
+
+    # * attribute: catalog_name
+    catalog_name: str = Field(
+        default='',
+        serialization_alias='name',
+        validation_alias=AliasChoices('name', 'catalog_name'),
+        description='Catalog display name stored as name.',
+    )
+
+    # * attribute: note
+    note: Optional[str] = Field(default=None, description='Optional note.')
+
+    # * attribute: _NULLABLE_FIELDS
+    _NULLABLE_FIELDS: ClassVar[List[str]] = [
+        'note',
+    ]
+
+    # * attribute: _ROLES
+    _ROLES: ClassVar[Dict[str, Dict[str, Any]]] = {
+        'to_h5.attrs': {
+            'by_alias': True,
+            'exclude_none': True,
+        },
+    }
+
+# ** class: meta_node_repository
+class MetaNodeRepository(NodeRepository, H5Repository):
+    '''
+    Node repository composed with a fixed path for mixin tests.
+    '''
+
+    # * attribute: node_cls
+    node_cls: ClassVar[type] = MetaNodeObject
+
+    # * attribute: node_path
+    node_path: ClassVar[str] = '/catalog'
+
+# ** class: grouped_meta_repository
+class GroupedMetaRepository(NodeRepository, H5Repository):
+    '''
+    Node repository whose path contains a caller-supplied placeholder.
+    '''
+
+    # * attribute: node_cls
+    node_cls: ClassVar[type] = MetaNodeObject
+
+    # * attribute: node_path
+    node_path: ClassVar[str] = '/groups/{group_id}/meta'
+
 # *** fixtures
 
 # ** fixture: h5_path
@@ -99,6 +153,15 @@ def repo(h5_path: str) -> ItemTableRepository:
     '''
 
     return ItemTableRepository(h5_file=h5_path)
+
+# ** fixture: meta_repo
+@pytest.fixture
+def meta_repo(h5_path: str) -> MetaNodeRepository:
+    '''
+    Return a meta node repository aimed at the temporary HDF5 path.
+    '''
+
+    return MetaNodeRepository(h5_file=h5_path)
 
 # *** tests
 
@@ -417,3 +480,120 @@ def test_table_repository_formats_path_kwargs(h5_path: str) -> None:
     assert repo.exists('name == b"Widget"', group_id='calc') is True
     assert repo.delete('name == b"Widget"', group_id='calc') == 1
     assert repo.exists('name == b"Widget"', group_id='calc') is False
+
+# ** test: node_repository_is_exported
+def test_node_repository_is_exported() -> None:
+    '''
+    Test that NodeRepository is exported and has no delete or constructor.
+    '''
+
+    import tiferet_h5
+    import tiferet_h5.repos as repos
+
+    assert repos.NodeRepository is NodeRepository
+    assert tiferet_h5.NodeRepository is NodeRepository
+    assert not issubclass(NodeRepository, H5Repository)
+    assert '__init__' not in NodeRepository.__dict__
+    assert 'delete' not in NodeRepository.__dict__
+    assert hasattr(NodeRepository, 'save')
+    assert hasattr(NodeRepository, 'get')
+    assert hasattr(NodeRepository, 'exists')
+
+# ** test: node_repository_save_get
+def test_node_repository_save_get(
+        meta_repo: MetaNodeRepository,
+        h5_path: str,
+    ) -> None:
+    '''
+    Test that save creates a missing group and round-trips attributes.
+    '''
+
+    # Persist aliased attributes, including a declared nullable None.
+    meta_repo.save(MetaNodeObject(catalog_name='Catalog', note=None))
+
+    # Read the node back through from_attrs.
+    found = meta_repo.get()
+
+    assert isinstance(found, MetaNodeObject)
+    assert found.catalog_name == 'Catalog'
+    assert found.note is None
+    assert meta_repo.exists() is True
+
+    # The group stores alias keys and the empty-string sentinel.
+    with H5Client(h5_path, mode='r') as h5:
+        assert h5.node_exists('/catalog') is True
+        attrs = h5.get_node_attrs('/catalog')
+
+    assert attrs['name'] == 'Catalog'
+    assert attrs['note'] == ''
+    assert 'catalog_name' not in attrs
+
+    # A later save updates the existing group instead of recreating it.
+    meta_repo.save(MetaNodeObject(catalog_name='Revised', note='kept'))
+    revised = meta_repo.get()
+
+    assert revised is not None
+    assert revised.catalog_name == 'Revised'
+    assert revised.note == 'kept'
+
+# ** test: node_repository_missing_file_does_not_create
+def test_node_repository_missing_file_does_not_create(
+        meta_repo: MetaNodeRepository,
+        h5_path: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+    '''
+    Test that missing-file reads return empty results and do not create the file.
+    '''
+
+    # Fail the test if a read constructs a client.
+    def fail_client(*args, **kwargs):
+        raise AssertionError('missing-file reads must not open an H5Client.')
+
+    monkeypatch.setattr('tiferet_h5.repos.h5.H5Client', fail_client)
+
+    # Reads must stay empty without creating the path.
+    assert Path(h5_path).exists() is False
+    assert meta_repo.get() is None
+    assert meta_repo.exists() is False
+    assert Path(h5_path).exists() is False
+
+# ** test: node_repository_missing_node_returns_empty
+def test_node_repository_missing_node_returns_empty(
+        meta_repo: MetaNodeRepository,
+        h5_path: str,
+    ) -> None:
+    '''
+    Test that a present file with no node reads as empty and is not created.
+    '''
+
+    # Create a valid file that does not contain the node.
+    with H5Client(h5_path, mode='w') as h5:
+        h5.create_group('/other')
+
+    # Reads must not create the missing group.
+    assert meta_repo.get() is None
+    assert meta_repo.exists() is False
+
+    with H5Client(h5_path, mode='r') as h5:
+        assert h5.node_exists('/catalog') is False
+
+# ** test: node_repository_formats_path_kwargs
+def test_node_repository_formats_path_kwargs(h5_path: str) -> None:
+    '''
+    Test that path kwargs are applied only when supplied.
+    '''
+
+    repo = GroupedMetaRepository(h5_file=h5_path)
+    assert repo.resolve_node_path() == '/groups/{group_id}/meta'
+
+    # Save and read through the formatted path.
+    repo.save(MetaNodeObject(catalog_name='Catalog', note=None), group_id='calc')
+    found = repo.get(group_id='calc')
+
+    assert found is not None
+    assert found.catalog_name == 'Catalog'
+    assert found.note is None
+    assert repo.get(group_id='other') is None
+    assert repo.exists(group_id='calc') is True
+    assert repo.exists(group_id='other') is False
