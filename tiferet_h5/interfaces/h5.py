@@ -19,10 +19,10 @@ class H5Service(FileService):
     '''
     Service contract for HDF5 file operations via PyTables.
 
-    Extends ``FileService`` with group, table, index, array, and attribute
-    operations that map to the hierarchical structure of an HDF5 file.  All
-    methods operate on the open file handle established by ``open_file`` /
-    ``__enter__``.
+    Extends ``FileService`` with group, table, index, array, attribute, and
+    compaction operations that map to the hierarchical structure of an HDF5
+    file.  All methods operate on the open file handle established by
+    ``open_file`` / ``__enter__``.
     '''
 
     # * method: flush
@@ -434,5 +434,17 @@ class H5Service(FileService):
         :type path: str
         :param column: Column to reindex.  Omit to reindex every indexed column.
         :type column: Optional[str]
+        '''
+        raise NotImplementedError()
+
+    # * method: compact
+    @abstractmethod
+    def compact(self, filters: Optional[tables.Filters] = None) -> None:
+        '''
+        Rewrite the open file so deleted rows no longer occupy space.
+
+        :param filters: Optional PyTables filter policy applied to rewritten
+            leaves. ``None`` keeps each leaf's existing filters.
+        :type filters: Optional[tables.Filters]
         '''
         raise NotImplementedError()
