@@ -5,8 +5,11 @@
 # ** core
 from typing import ClassVar, Iterator, List, Optional, Type
 
+# ** infra
+import tables
+
 # ** app
-from ..mappers import TableObject
+from ..mappers import NodeObject, TableObject
 
 # *** constants
 
@@ -21,9 +24,12 @@ class TableRepository:
     Shared open, append, and read sequence for columnar HDF5 repositories.
 
     Compose this mixin beside ``H5Repository`` and declare ``table_cls`` and
-    ``table_path``. Missing-file reads stay empty, and schema checks run only
-    when ``verify`` is called. The first create stamps ``schema_version``
-    unless ``stamp_schema_version`` is false.
+    ``table_path``. ``filters`` is the create-time compression policy.
+    Missing-file reads stay empty, and schema checks run only when
+    ``verify`` is called. The first create stamps ``schema_version``
+    unless ``stamp_schema_version`` is false. Do not also compose
+    ``NodeRepository`` on the same class; ``save``, ``get``, and
+    ``exists`` collide under the MRO.
     '''
 
     # * attribute: table_cls
@@ -34,6 +40,9 @@ class TableRepository:
 
     # * attribute: stamp_schema_version
     stamp_schema_version: ClassVar[bool] = True
+
+    # * attribute: filters
+    filters: ClassVar[Optional[tables.Filters]] = None
 
     # * method: resolve_table_path
     def resolve_table_path(self, **path_kwargs) -> str:
@@ -61,10 +70,12 @@ class TableRepository:
         '''
         Append one table object as a new row.
 
-        Creates the table when the node is absent. On that first create, and
-        only when ``stamp_schema_version`` is true, writes ``schema_version``
-        from ``table_cls.schema_fingerprint()``. A later save does not rewrite
-        it. Does not check the live schema; call ``verify`` for that.
+        Creates the table when the node is absent and forwards ``filters``
+        only to that create. On that first create, and only when
+        ``stamp_schema_version`` is true, writes ``schema_version`` from
+        ``table_cls.schema_fingerprint()``. A later save does not rewrite
+        the stamp or an existing table's compression. Does not check the
+        live schema; call ``verify`` for that.
 
         :param obj: The table object to append.
         :type obj: TableObject
@@ -76,12 +87,17 @@ class TableRepository:
         path = self.resolve_table_path(**path_kwargs)
 
         # Create the table when absent, stamp once, append one row, and flush.
+        # filters is forwarded only to table creation, not to the row append.
         with self.client() as h5:
             # Record whether this save is creating the table.
             created = not h5.node_exists(path)
 
             # Open the existing table or create it from the declared schema.
-            table = h5.get_or_create_table(path, self.table_cls.get_description())
+            table = h5.get_or_create_table(
+                path,
+                self.table_cls.get_description(),
+                filters=self.filters,
+            )
 
             # Stamp the fingerprint only on the create, and only when enabled.
             if created and self.stamp_schema_version:
@@ -272,3 +288,125 @@ class TableRepository:
         # Delegate the schema check to the open client.
         with self.client() as h5:
             h5.assert_schema(path, self.table_cls)
+
+# ** class: node_repository
+# >> see: @guides/repos.md#noderepository
+class NodeRepository:
+    '''
+    Shared group create and attribute read for attribute-backed repositories.
+
+    Compose this mixin beside ``H5Repository`` and declare ``node_cls`` and
+    ``node_path``. Missing-file reads stay empty. There is no ``delete``,
+    because ``H5Service`` has no generic node-removal method. Do not also
+    compose ``TableRepository`` on the same class; ``save``, ``get``, and
+    ``exists`` collide under the MRO.
+    '''
+
+    # * attribute: node_cls
+    node_cls: ClassVar[Type[NodeObject]]
+
+    # * attribute: node_path
+    node_path: ClassVar[str] = ''
+
+    # * method: resolve_node_path
+    def resolve_node_path(self, **path_kwargs) -> str:
+        '''
+        Return the HDF5 path for this repository's node.
+
+        Placeholders in ``node_path`` are formatted only when keyword
+        arguments are given. An empty call returns the template unchanged.
+
+        :param path_kwargs: Values for ``node_path`` placeholders.
+        :type path_kwargs: dict
+        :return: The resolved absolute HDF5 node path.
+        :rtype: str
+        '''
+
+        # Format only when the caller supplied placeholder values.
+        if path_kwargs:
+            return self.node_path.format(**path_kwargs)
+
+        # Otherwise leave the template unchanged.
+        return self.node_path
+
+    # * method: save
+    def save(self, obj: NodeObject, **path_kwargs) -> None:
+        '''
+        Write one node object's attributes onto its group.
+
+        Creates the group when the node is absent. Sets each ``to_attrs()``
+        item with ``set_node_attr``. Does not remove attributes that the
+        object no longer emits.
+
+        :param obj: The node object to persist.
+        :type obj: NodeObject
+        :param path_kwargs: Values for ``node_path`` placeholders.
+        :type path_kwargs: dict
+        '''
+
+        # Resolve the node path from class state and caller kwargs.
+        path = self.resolve_node_path(**path_kwargs)
+
+        # Create the group when absent, then write each attribute.
+        with self.client() as h5:
+            if not h5.node_exists(path):
+                h5.create_group(path)
+
+            for name, value in obj.to_attrs().items():
+                h5.set_node_attr(path, name, value)
+
+    # * method: get
+    def get(self, **path_kwargs) -> Optional[NodeObject]:
+        '''
+        Return the node at the resolved path, or ``None``.
+
+        A missing file returns ``None`` without opening a client. A missing
+        node also returns ``None`` and does not create the file.
+
+        :param path_kwargs: Values for ``node_path`` placeholders.
+        :type path_kwargs: dict
+        :return: The node object, or ``None``.
+        :rtype: Optional[NodeObject]
+        '''
+
+        # A missing file must not open or create the HDF5 path.
+        if not self.file_exists():
+            return None
+
+        # Resolve the node path from class state and caller kwargs.
+        path = self.resolve_node_path(**path_kwargs)
+
+        # Read attributes, or nothing when the node is absent.
+        with self.client() as h5:
+            if not h5.node_exists(path):
+                return None
+
+            attrs = h5.get_node_attrs(path)
+
+        # Map the attribute dict onto the declared node class.
+        return self.node_cls.from_attrs(attrs)
+
+    # * method: exists
+    def exists(self, **path_kwargs) -> bool:
+        '''
+        Return whether the resolved node exists.
+
+        A missing file returns ``False`` without opening a client and does
+        not create the file.
+
+        :param path_kwargs: Values for ``node_path`` placeholders.
+        :type path_kwargs: dict
+        :return: True if the node exists, otherwise False.
+        :rtype: bool
+        '''
+
+        # A missing file must not open or create the HDF5 path.
+        if not self.file_exists():
+            return False
+
+        # Resolve the node path from class state and caller kwargs.
+        path = self.resolve_node_path(**path_kwargs)
+
+        # Delegate to the open client's node check.
+        with self.client() as h5:
+            return h5.node_exists(path)

@@ -6,7 +6,7 @@
 import inspect
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, ClassVar, Dict
+from typing import Any, ClassVar, Dict, Optional
 
 # ** infra
 import numpy as np
@@ -20,6 +20,7 @@ from tiferet.interfaces import ServiceError
 from ...interfaces import H5Service
 from ...mappers.core import TableObject
 from ..h5 import (
+    H5_COMPACT_FAILED_ID,
     H5_CONN_NOT_INITIALIZED_ID,
     H5_CONN_NOT_INITIALIZED_MESSAGE,
     H5_FILE_ALREADY_OPEN_ID,
@@ -898,3 +899,221 @@ def test_assert_schema_missing_node(existing_h5: Path) -> None:
             h5.assert_schema('/missing', SampleTableObject)
 
     assert exc_info.value.error_code == H5_NODE_NOT_FOUND_ID
+# ** test: create_table_with_filters
+def test_create_table_with_filters(h5_path: Path) -> None:
+    '''
+    Test that create_table() stores a Filters policy and stays uncompressed when omitted.
+    '''
+
+    # Both contracts accept filters and do not grow library-level parameters.
+    for cls in (H5Service, H5Client):
+        for name in ('create_table', 'get_or_create_table', 'create_array'):
+            signature = inspect.signature(getattr(cls, name))
+            filters_param = signature.parameters['filters']
+
+            assert 'complib' not in signature.parameters
+            assert 'complevel' not in signature.parameters
+            assert filters_param.default is None
+            assert filters_param.annotation == Optional[tables.Filters]
+
+        assert list(inspect.signature(cls.create_table).parameters) == [
+            'self', 'path', 'description', 'title', 'filters', 'kwargs',
+        ]
+        assert list(inspect.signature(cls.get_or_create_table).parameters) == [
+            'self', 'path', 'description', 'title', 'filters', 'kwargs',
+        ]
+        assert list(inspect.signature(cls.create_array).parameters) == [
+            'self', 'path', 'data', 'title', 'filters',
+        ]
+
+    with H5Client(h5_path, mode='w') as h5:
+        plain = h5.create_table('/plain', SampleTableObject.get_description())
+        compressed = h5.create_table(
+            '/items',
+            SampleTableObject.get_description(),
+            filters=tables.Filters(complevel=1),
+        )
+
+        assert plain.filters.complevel == 0
+        assert compressed.filters.complevel == 1
+
+# ** test: get_or_create_table_does_not_rewrite_filters
+def test_get_or_create_table_does_not_rewrite_filters(h5_path: Path) -> None:
+    '''
+    Test that get_or_create_table() ignores filters when the table already exists.
+    '''
+    with H5Client(h5_path, mode='w') as h5:
+        created = h5.get_or_create_table(
+            '/items',
+            SampleTableObject.get_description(),
+            filters=tables.Filters(complevel=1),
+        )
+        h5.append_rows('/items', [{'name': 'Alpha', 'value': 1.0}])
+        existing = h5.get_or_create_table(
+            '/items',
+            SampleTableObject.get_description(),
+            filters=tables.Filters(complevel=9),
+        )
+
+        assert existing._v_pathname == created._v_pathname
+        assert existing.nrows == 1
+        assert existing.filters.complevel == 1
+
+# ** test: create_array_filters_uses_carray
+def test_create_array_filters_uses_carray(h5_path: Path) -> None:
+    '''
+    Test that create_array() returns Array without filters and CArray with filters.
+    '''
+    data = np.array([1.0, 2.0, 3.0])
+    with H5Client(h5_path, mode='w') as h5:
+        plain = h5.create_array('/plain', data)
+        compressed = h5.create_array(
+            '/temps',
+            data,
+            filters=tables.Filters(complevel=1),
+        )
+
+        assert isinstance(plain, tables.Array)
+        assert not isinstance(plain, tables.CArray)
+        assert isinstance(compressed, tables.CArray)
+        assert compressed.filters.complevel == 1
+        np.testing.assert_array_equal(compressed[:], data)
+
+# ** test: compact_signature
+def test_compact_signature() -> None:
+    '''
+    Test that H5Service and H5Client expose compact() and its error code.
+    '''
+    assert H5_COMPACT_FAILED_ID == 'H5_COMPACT_FAILED'
+
+    for cls in (H5Service, H5Client):
+        signature = inspect.signature(cls.compact)
+        filters_param = signature.parameters['filters']
+
+        assert list(signature.parameters) == ['self', 'filters']
+        assert filters_param.default is None
+        assert filters_param.annotation == Optional[tables.Filters]
+        assert signature.return_annotation is None
+
+# ** test: compact_preserves_indexes
+def test_compact_preserves_indexes(h5_path: Path) -> None:
+    '''
+    Test that compact() keeps a column index and leaves the client open.
+    '''
+    with H5Client(h5_path, mode='a') as h5:
+        h5.create_table('/items', SkuTableObject.get_description())
+        h5.append_rows('/items', [
+            {'sku': 'A-1', 'missing': 'x'},
+            {'sku': 'B-2', 'missing': 'y'},
+        ])
+        h5.create_index('/items', 'sku')
+
+        h5.compact()
+
+        assert h5.h5file is not None
+        assert h5.mode == 'a'
+        assert h5.h5file.mode == 'a'
+        assert h5.is_indexed('/items', 'sku') is True
+        assert h5.get_table('/items').cols.sku.index.kind == 'full'
+        assert h5.is_indexed('/items', 'missing') is False
+
+# ** test: compact_filters_override
+def test_compact_filters_override(h5_path: Path) -> None:
+    '''
+    Test that compact(filters=...) overrides per-leaf filter settings.
+    '''
+    data = np.array([1.0, 2.0, 3.0])
+    with H5Client(h5_path, mode='a') as h5:
+        h5.create_table(
+            '/items',
+            SampleTableObject.get_description(),
+            filters=tables.Filters(complevel=9),
+        )
+        h5.append_rows('/items', [{'name': 'Alpha', 'value': 1.0}])
+        h5.create_array(
+            '/temps',
+            data,
+            filters=tables.Filters(complevel=9),
+        )
+
+        h5.compact(filters=tables.Filters(complevel=1))
+
+        rewritten = h5.get_table('/items')
+        rewritten_array = h5.get_array('/temps')
+        assert rewritten.filters.complevel == 1
+        assert rewritten_array.filters.complevel == 1
+        assert h5.read_rows('/items') == [{'name': 'Alpha', 'value': 1.0}]
+        np.testing.assert_array_equal(rewritten_array[:], data)
+
+# ** test: compact_reclaims_deleted_rows
+def test_compact_reclaims_deleted_rows(h5_path: Path) -> None:
+    '''
+    Test that compact() reclaims deleted rows and keeps root title and attrs.
+    '''
+    with H5Client(h5_path, mode='a') as h5:
+        h5.h5file.root._v_title = 'Catalog'
+        h5.set_node_attr('/', 'owner', 'ashatz')
+        h5.create_table(
+            '/items',
+            SampleTableObject.get_description(),
+            filters=tables.Filters(complevel=9),
+        )
+        h5.append_rows('/items', [
+            {'name': f'item-{index:04d}-{"x" * 80}', 'value': float(index)}
+            for index in range(1000)
+        ])
+        size_before_delete = h5_path.stat().st_size
+
+        # Delete in place. HDF5 does not shrink the file until a rewrite.
+        table = h5.get_table('/items')
+        table.remove_rows(0, 990)
+        table.flush()
+        h5.flush()
+        size_before_rewrite = h5_path.stat().st_size
+
+        h5.compact()
+
+        remaining = h5.read_rows('/items')
+        size_after = h5_path.stat().st_size
+        assert len(remaining) == 10
+        assert remaining[0]['name'].startswith('item-0990')
+        assert size_after < size_before_rewrite or size_after <= size_before_delete
+        assert h5.h5file is not None
+        assert h5.mode == 'a'
+        assert h5.h5file.root._v_title == 'Catalog'
+        assert h5.get_node_attr('/', 'owner') == 'ashatz'
+        assert h5.get_table('/items').filters.complevel == 9
+
+# ** test: compact_unopened_raises
+def test_compact_unopened_raises(h5_path: Path) -> None:
+    '''
+    Test that compact() raises H5_CONN_NOT_INITIALIZED before open.
+    '''
+    client = H5Client(h5_path, mode='a')
+    with pytest.raises(ServiceError) as exc_info:
+        client.compact()
+
+    assert exc_info.value.error_code == H5_CONN_NOT_INITIALIZED_ID
+
+# ** test: compact_failure_chains_cause
+def test_compact_failure_chains_cause(h5_path: Path, monkeypatch) -> None:
+    '''
+    Test that a copy failure raises H5_COMPACT_FAILED and chains the cause.
+    '''
+    with H5Client(h5_path, mode='a') as h5:
+        h5.create_group('/data')
+
+        def fail_copy(*args, **kwargs):
+            raise tables.HDF5ExtError('copy failed')
+
+        monkeypatch.setattr(h5.h5file, 'copy_children', fail_copy)
+        with pytest.raises(ServiceError) as exc_info:
+            h5.compact()
+
+        assert h5.h5file is not None
+
+    assert exc_info.value.error_code == H5_COMPACT_FAILED_ID
+    assert exc_info.value.error_code == 'H5_COMPACT_FAILED'
+    assert isinstance(exc_info.value.__cause__, tables.HDF5ExtError)
+    with H5Client(h5_path, mode='r') as h5:
+        assert h5.node_exists('/data') is True

@@ -3,6 +3,8 @@
 # *** imports
 
 # ** core
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -52,6 +54,8 @@ H5_INDEX_FAILED_ID = 'H5_INDEX_FAILED'
 
 # ** constant: h5_schema_mismatch_id
 H5_SCHEMA_MISMATCH_ID = 'H5_SCHEMA_MISMATCH'
+# ** constant: h5_compact_failed_id
+H5_COMPACT_FAILED_ID = 'H5_COMPACT_FAILED'
 
 # *** constants (messages)
 
@@ -489,6 +493,7 @@ class H5Client(FileLoader, H5Service):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -500,6 +505,9 @@ class H5Client(FileLoader, H5Service):
         :type description: type
         :param title: Optional human-readable title.
         :type title: str
+        :param filters: Optional PyTables filter policy. ``None`` keeps the
+            uncompressed create path.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Additional kwargs forwarded to ``tables.File.create_table``.
         :type kwargs: dict
         :return: The created PyTables table object.
@@ -528,12 +536,13 @@ class H5Client(FileLoader, H5Service):
             # Resolve the parent group.
             parent = self.h5file.get_node(parent_path)
 
-            # Create and return the table.
+            # Create and return the table, forwarding any filter policy.
             return self.h5file.create_table(
                 parent,
                 table_name,
                 description,
                 title=title,
+                filters=filters,
                 **kwargs,
             )
 
@@ -590,6 +599,7 @@ class H5Client(FileLoader, H5Service):
             path: str,
             description: type,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
             **kwargs,
         ) -> Any:
         '''
@@ -601,6 +611,9 @@ class H5Client(FileLoader, H5Service):
         :type description: type
         :param title: Optional title used when creating.
         :type title: str
+        :param filters: Optional PyTables filter policy, forwarded only when
+            the table is created. An existing table is returned unchanged.
+        :type filters: Optional[tables.Filters]
         :param kwargs: Extra kwargs forwarded to ``create_table`` when creating.
         :type kwargs: dict
         :return: The existing or newly created PyTables table object.
@@ -615,8 +628,14 @@ class H5Client(FileLoader, H5Service):
         parent_path = path.rsplit('/', 1)[0]
         self.ensure_parent_groups(parent_path or '/')
 
-        # Create and return the table without recreating an existing one.
-        return self.create_table(path, description, title=title, **kwargs)
+        # Forward filters only on the create path.
+        return self.create_table(
+            path,
+            description,
+            title=title,
+            filters=filters,
+            **kwargs,
+        )
 
     # * method: assert_schema
     # >> see: @guides/utils/h5.md#h5client-assert-schema
@@ -1072,6 +1091,7 @@ class H5Client(FileLoader, H5Service):
             path: str,
             data: Any,
             title: str = '',
+            filters: Optional[tables.Filters] = None,
         ) -> Any:
         '''
         Create an array node at the specified path.
@@ -1082,6 +1102,9 @@ class H5Client(FileLoader, H5Service):
         :type data: Any
         :param title: Optional human-readable title.
         :type title: str
+        :param filters: Optional PyTables filter policy. ``None`` creates a
+            plain ``Array``. A value creates a compressed ``CArray``.
+        :type filters: Optional[tables.Filters]
         :return: The created PyTables array object.
         :rtype: Any
         :raises ServiceError: If the file is not open or creation fails.
@@ -1107,8 +1130,23 @@ class H5Client(FileLoader, H5Service):
             # Resolve the parent group.
             parent = self.h5file.get_node(parent_path)
 
-            # Create and return the array node.
-            return self.h5file.create_array(parent, array_name, data, title=title)
+            # A filter policy requires a chunked CArray. Omit it for a plain Array.
+            if filters is None:
+                return self.h5file.create_array(
+                    parent,
+                    array_name,
+                    data,
+                    title=title,
+                )
+
+            # Create and return the compressed array.
+            return self.h5file.create_carray(
+                parent,
+                array_name,
+                title=title,
+                filters=filters,
+                obj=data,
+            )
 
         except tables.NoSuchNodeError as e:
 
@@ -1547,3 +1585,92 @@ class H5Client(FileLoader, H5Service):
                 original_error=str(e),
                 path=path,
             )
+
+    # * method: compact
+    def compact(self, filters: Optional[tables.Filters] = None) -> None:
+        '''
+        Rewrite the open file and replace it atomically.
+
+        Copies ``'/'`` with ``copy_children`` into a temporary file opened in
+        mode ``'w'``, always passing ``recursive=True`` and ``propindexes=True``.
+        ``filters`` is forwarded only when it is not ``None``. The source root
+        title and root user attributes are copied onto the destination root.
+        The client is then closed, the original path is replaced, and the file
+        is reopened in the original mode.
+
+        :param filters: Optional PyTables filter policy applied to rewritten
+            leaves. ``None`` keeps each leaf's existing filters.
+        :type filters: Optional[tables.Filters]
+        :raises ServiceError: If the file is not open, or the copy or replace
+            fails.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(
+                self,
+                H5_CONN_NOT_INITIALIZED_ID,
+                message=H5_CONN_NOT_INITIALIZED_MESSAGE,
+            )
+
+        # Flush pending writes so the rewrite includes them.
+        self.flush()
+
+        # Stage the rewrite beside the original so the replace stays atomic.
+        tmp_path = None
+        try:
+
+            # Create a temporary destination in the same directory.
+            fd, tmp_name = tempfile.mkstemp(
+                suffix='.h5',
+                prefix=f'.{self.path.name}.',
+                dir=self.path.parent,
+            )
+            os.close(fd)
+            tmp_path = Path(tmp_name)
+
+            # Copy children into a new file. Pass filters only when overriding.
+            with tables.open_file(str(tmp_path), mode='w') as destination:
+                copy_kwargs = {
+                    'recursive': True,
+                    'propindexes': True,
+                }
+                if filters is not None:
+                    copy_kwargs['filters'] = filters
+                self.h5file.copy_children('/', destination.root, **copy_kwargs)
+
+                # Preserve the source root title.
+                destination.root._v_title = self.h5file.root._v_title
+
+                # Preserve root user attributes. System attributes stay behind.
+                source_attrs = self.h5file.root._v_attrs
+                for name in source_attrs._v_attrnamesuser:
+                    destination.root._v_attrs[name] = source_attrs[name]
+
+            # Close and atomically replace the original path.
+            self.close_file()
+            os.replace(tmp_path, self.path)
+
+        except ServiceError:
+            raise
+
+        except Exception as e:
+
+            # Wrap copy and replace failures with the compact error code.
+            ServiceError.raise_for(
+                self,
+                H5_COMPACT_FAILED_ID,
+                message=f'Failed to compact HDF5 file at {self.path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=str(self.path),
+            )
+
+        finally:
+
+            # Remove a leftover temporary file when the rewrite did not replace.
+            if tmp_path is not None and tmp_path.exists():
+                tmp_path.unlink()
+
+        # Reopen in the original mode. Open failures keep their own error codes.
+        self.open_file()
