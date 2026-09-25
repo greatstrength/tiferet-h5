@@ -4,7 +4,7 @@
 
 # ** core
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 # ** app
 from tiferet.interfaces import FileService
@@ -206,6 +206,55 @@ class H5Service(FileService):
         :type kwargs: dict
         :return: Matching rows as a list of dicts with Python-native values.
         :rtype: List[Dict[str, Any]]
+        '''
+        raise NotImplementedError()
+
+    # * method: iter_rows
+    @abstractmethod
+    def iter_rows(self,
+            path: str,
+            start: Optional[int] = None,
+            stop: Optional[int] = None,
+            condition: Optional[str] = None,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Yield rows from the table at ``path`` without building a result list.
+
+        When ``condition`` is provided it is applied as a PyTables in-kernel
+        query; ``start`` / ``stop`` are applied as slice indices otherwise.
+
+        :param path: Absolute HDF5 path for the source table.
+        :type path: str
+        :param start: Optional start row index (inclusive).
+        :type start: Optional[int]
+        :param stop: Optional stop row index (exclusive).
+        :type stop: Optional[int]
+        :param condition: Optional PyTables condition string.
+        :type condition: Optional[str]
+        :return: Normalized row dicts, one at a time.
+        :rtype: Iterator[Dict[str, Any]]
+        '''
+        raise NotImplementedError()
+
+    # * method: iter_query
+    @abstractmethod
+    def iter_query(self,
+            path: str,
+            condition: str,
+            **kwargs,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Yield rows matching an in-kernel PyTables condition.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param condition: PyTables condition string,
+            e.g. ``'(group_id == b"calc") & (active == True)'``.
+        :type condition: str
+        :param kwargs: Additional kwargs forwarded to ``table.where``.
+        :type kwargs: dict
+        :return: Matching rows as normalized dicts, one at a time.
+        :rtype: Iterator[Dict[str, Any]]
         '''
         raise NotImplementedError()
 

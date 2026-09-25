@@ -4,7 +4,7 @@
 
 # ** core
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 # ** infra
 import tables
@@ -62,6 +62,37 @@ VALID_H5_MODES = (
     'w-',
     'a',
 )
+
+# *** functions
+
+# ** function: normalize_row
+def normalize_row(table: Any, record: Any) -> Dict[str, Any]:
+    '''
+    Convert one table record into a dict of Python-native values.
+
+    Bytes are decoded as UTF-8.  Values that expose ``item`` are reduced to
+    their Python scalar.  Used by both eager reads and streaming iterators.
+
+    :param table: The PyTables table that owns the record.
+    :type table: Any
+    :param record: A row, NumPy record, or mapping keyed by column name.
+    :type record: Any
+    :return: Column names mapped to Python-native values.
+    :rtype: Dict[str, Any]
+    '''
+
+    # Read each column and reduce it to a Python-native value.
+    row_dict = {}
+    for col in table.colnames:
+        val = record[col]
+        if isinstance(val, bytes):
+            val = val.decode('utf-8')
+        elif hasattr(val, 'item'):
+            val = val.item()
+        row_dict[col] = val
+
+    # Return the normalized row.
+    return row_dict
 
 # *** utils
 
@@ -694,15 +725,7 @@ class H5Client(FileLoader, H5Service):
             # Normalize each record into a plain Python dict.
             result = []
             for record in records:
-                row_dict = {}
-                for col in table.colnames:
-                    val = record[col]
-                    if isinstance(val, bytes):
-                        val = val.decode('utf-8')
-                    elif hasattr(val, 'item'):
-                        val = val.item()
-                    row_dict[col] = val
-                result.append(row_dict)
+                result.append(normalize_row(table, record))
 
             # Return the list of normalized dicts.
             return result
@@ -751,6 +774,180 @@ class H5Client(FileLoader, H5Service):
 
         # Delegate to read_rows with the condition applied.
         return self.read_rows(path, condition=condition)
+
+    # * method: iter_rows
+    def iter_rows(self,
+            path: str,
+            start: Optional[int] = None,
+            stop: Optional[int] = None,
+            condition: Optional[str] = None,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Yield rows from the table at ``path`` without building a result list.
+
+        ``condition`` uses the same PyTables condition path as ``read_rows``.
+        ``start`` and ``stop`` apply only when ``condition`` is omitted.
+
+        :param path: Absolute HDF5 path for the source table.
+        :type path: str
+        :param start: Optional start row index (inclusive).
+        :type start: Optional[int]
+        :param stop: Optional stop row index (exclusive).
+        :type stop: Optional[int]
+        :param condition: Optional PyTables condition string.
+        :type condition: Optional[str]
+        :return: Normalized row dicts, one at a time.
+        :rtype: Iterator[Dict[str, Any]]
+        :raises ServiceError: If the file is not open, the node is absent,
+            or a query error occurs.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(
+                self,
+                H5_CONN_NOT_INITIALIZED_ID,
+                message=H5_CONN_NOT_INITIALIZED_MESSAGE,
+            )
+
+        try:
+
+            # Retrieve the target table without reading its rows.
+            table = self.h5file.get_node(path)
+
+            # Select a streaming source.  Do not materialize the result.
+            if condition:
+                records = table.where(condition)
+            else:
+                records = table.iterrows(start=start, stop=stop)
+
+        except tables.NoSuchNodeError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                message=f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        except Exception as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_QUERY_FAILED_ID,
+                message=f'Failed to query table at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+            )
+
+        # Yield normalized rows one at a time.
+        return self.yield_normalized_rows(table, records, path)
+
+    # * method: iter_query
+    def iter_query(self,
+            path: str,
+            condition: str,
+            **kwargs,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Yield rows matching an in-kernel PyTables condition.
+
+        Keyword arguments are forwarded to the same ``table.where`` mechanism
+        that ``query`` documents.  The iterator is not converted to a list.
+
+        :param path: Absolute HDF5 path for the target table.
+        :type path: str
+        :param condition: PyTables condition string.
+        :type condition: str
+        :param kwargs: Additional kwargs forwarded to ``table.where``.
+        :type kwargs: dict
+        :return: Matching rows as normalized dicts, one at a time.
+        :rtype: Iterator[Dict[str, Any]]
+        :raises ServiceError: If the file is not open, the node is absent,
+            or the condition string is invalid.
+        '''
+
+        # Guard against an uninitialised file handle.
+        if self.h5file is None:
+            ServiceError.raise_for(
+                self,
+                H5_CONN_NOT_INITIALIZED_ID,
+                message=H5_CONN_NOT_INITIALIZED_MESSAGE,
+            )
+
+        try:
+
+            # Retrieve the target table without reading its rows.
+            table = self.h5file.get_node(path)
+
+            # Open the same condition iterator query forwards kwargs toward.
+            records = table.where(condition, **kwargs)
+
+        except tables.NoSuchNodeError as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_NODE_NOT_FOUND_ID,
+                message=f'Node not found at path: {path}.',
+                cause=e,
+                path=path,
+            )
+
+        except Exception as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_QUERY_FAILED_ID,
+                message=f'Failed to query table at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+            )
+
+        # Yield matching rows one at a time.
+        return self.yield_normalized_rows(table, records, path)
+
+    # * method: yield_normalized_rows
+    def yield_normalized_rows(self,
+            table: Any,
+            records: Any,
+            path: str,
+        ) -> Iterator[Dict[str, Any]]:
+        '''
+        Yield ``normalize_row`` results from a row iterator.
+
+        Does not call ``list()`` on ``records``.  Failures raised while
+        iterating are wrapped as ``ServiceError`` with the query failure id.
+
+        :param table: The open PyTables table.
+        :type table: Any
+        :param records: A row iterator, not a materialized sequence.
+        :type records: Any
+        :param path: Absolute HDF5 path, included in error context.
+        :type path: str
+        :return: Normalized row dicts, one at a time.
+        :rtype: Iterator[Dict[str, Any]]
+        :raises ServiceError: If iterating the source fails.
+        '''
+
+        try:
+
+            # Yield one normalized row at a time.
+            for record in records:
+                yield normalize_row(table, record)
+
+        except Exception as e:
+
+            ServiceError.raise_for(
+                self,
+                H5_QUERY_FAILED_ID,
+                message=f'Failed to query table at {path}: {e}.',
+                cause=e,
+                original_error=str(e),
+                path=path,
+            )
 
     # * method: remove_rows
     def remove_rows(self, path: str, condition: str) -> int:

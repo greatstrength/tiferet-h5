@@ -3,6 +3,7 @@
 # *** imports
 
 # ** core
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, ClassVar, Dict
 
@@ -26,6 +27,7 @@ from ..h5 import (
     H5_INVALID_MODE_ID,
     H5_NODE_NOT_FOUND_ID,
     H5Client,
+    normalize_row,
 )
 
 # *** constants
@@ -357,6 +359,44 @@ def test_query(h5_with_table: Path) -> None:
 
     assert len(rows) == 1
     assert rows[0]['name'] == 'Alpha'
+
+# ** test: iter_rows_matches_read_rows
+def test_iter_rows_matches_read_rows(h5_with_table: Path) -> None:
+    '''
+    Test that iter_rows() yields the same dicts as read_rows(), one row at a time.
+    '''
+    assert not normalize_row.__name__.startswith('_')
+
+    with H5Client(h5_with_table, mode='r') as h5:
+        expected = h5.read_rows('/items')
+        stream = h5.iter_rows('/items')
+
+        assert isinstance(expected, list)
+        assert isinstance(stream, Iterator)
+        assert not isinstance(stream, list)
+
+        # Consume one row before the rest to prove the source is lazy.
+        first = next(stream)
+        rest = []
+        for row in stream:
+            rest.append(row)
+
+    assert len(expected) == 3
+    assert [first, *rest] == expected
+
+# ** test: iter_query_filters
+def test_iter_query_filters(h5_with_table: Path) -> None:
+    '''
+    Test that iter_query() yields only rows matching the condition.
+    '''
+    with H5Client(h5_with_table, mode='r') as h5:
+        rows = []
+        for row in h5.iter_query('/items', 'value > 1.5'):
+            rows.append(row)
+
+    assert len(rows) == 2
+    names = {row['name'] for row in rows}
+    assert names == {'Beta', 'Gamma'}
 
 # ** test: remove_rows
 def test_remove_rows(h5_with_table: Path) -> None:
