@@ -28,4 +28,4 @@ where = ["."]
 include = ["tiferet_h5*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tiferet_h5"]
+testpaths = ["tiferet_h5", "examples"]

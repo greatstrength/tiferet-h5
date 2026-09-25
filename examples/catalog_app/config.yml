@@ -1,0 +1,158 @@
+sessions:
+  catalog_client:
+    name: Catalog Client
+    description: >-
+      Config-driven client for the catalog example. Two repository instances
+      share catalog.h5. App('catalog_client') loads this session. The client
+      does not construct a repository.
+
+const:
+  h5_file: catalog.h5
+
+services:
+  catalog_item_service:
+    module_path: app.repos.catalog
+    class_name: CatalogItemsRepository
+    params:
+      h5_file: catalog.h5
+  catalog_meta_service:
+    module_path: app.repos.catalog
+    class_name: CatalogMetaRepository
+    params:
+      h5_file: catalog.h5
+  add_catalog_item_event:
+    module_path: app.events.catalog
+    class_name: AddCatalogItem
+  list_catalog_items_event:
+    module_path: app.events.catalog
+    class_name: ListCatalogItems
+  apply_item_discount_event:
+    module_path: app.events.catalog
+    class_name: ApplyItemDiscount
+  remove_catalog_item_event:
+    module_path: app.events.catalog
+    class_name: RemoveCatalogItem
+  save_catalog_meta_event:
+    module_path: app.events.catalog
+    class_name: SaveCatalogMeta
+  get_catalog_meta_event:
+    module_path: app.events.catalog
+    class_name: GetCatalogMeta
+  verify_and_compact_catalog_event:
+    module_path: app.events.catalog
+    class_name: VerifyAndCompactCatalog
+
+features:
+  catalog:
+    add_item:
+      name: Add Catalog Item
+      description: Appends an item when the sku is new
+      params_schema:
+        sku: str
+        name: str
+        price: float
+      steps:
+        - service_id: add_catalog_item_event
+          name: Add the item
+    list_items:
+      name: List Catalog Items
+      description: Returns the current item rows
+      steps:
+        - service_id: list_catalog_items_event
+          name: List the items
+    apply_discount:
+      name: Apply Item Discount
+      description: Replaces an item row with a discounted price
+      params_schema:
+        sku: str
+        discount: float
+      steps:
+        - service_id: apply_item_discount_event
+          name: Discount the item
+    remove_item:
+      name: Remove Catalog Item
+      description: Deletes an item by sku
+      params_schema:
+        sku: str
+      steps:
+        - service_id: remove_catalog_item_event
+          name: Remove the item
+    save_meta:
+      name: Save Catalog Meta
+      description: Writes the catalog title and currency
+      params_schema:
+        title: str
+        currency: str
+      steps:
+        - service_id: save_catalog_meta_event
+          name: Save the labels
+    get_meta:
+      name: Get Catalog Meta
+      description: Returns the catalog labels
+      steps:
+        - service_id: get_catalog_meta_event
+          name: Get the labels
+    verify_and_compact:
+      name: Verify And Compact Catalog
+      description: Asserts the item schema and rewrites the file
+      steps:
+        - service_id: verify_and_compact_catalog_event
+          name: Assert the schema and compact
+
+errors:
+  CATALOG_ITEM_EXISTS:
+    name: Catalog Item Exists
+    message:
+      - lang: en_US
+        text: 'Catalog item already exists: {sku}'
+  CATALOG_ITEM_NOT_FOUND:
+    name: Catalog Item Not Found
+    message:
+      - lang: en_US
+        text: 'Catalog item not found: {sku}'
+  CATALOG_ITEM_PRICE_INVALID:
+    name: Catalog Item Price Invalid
+    message:
+      - lang: en_US
+        text: 'Catalog item price must be positive: {sku}'
+  CATALOG_DISCOUNT_INVALID:
+    name: Catalog Discount Invalid
+    message:
+      - lang: en_US
+        text: 'Discount must be from 0 to 1: {discount}'
+  CATALOG_META_CURRENCY_EMPTY:
+    name: Catalog Meta Currency Empty
+    message:
+      - lang: en_US
+        text: 'Catalog currency must not be empty.'
+  CATALOG_META_NOT_FOUND:
+    name: Catalog Meta Not Found
+    message:
+      - lang: en_US
+        text: 'Catalog meta was not found.'
+
+logging:
+  formatters:
+    default:
+      name: Default Formatter
+      format: '%(message)s'
+  handlers:
+    default:
+      name: Default Handler
+      module_path: logging
+      class_name: StreamHandler
+      level: CRITICAL
+      formatter: default
+      stream: ext://sys.stderr
+  loggers:
+    root:
+      name: Root Logger
+      level: CRITICAL
+      handlers:
+        - default
+      is_root: true
+    default:
+      name: Default Logger
+      level: CRITICAL
+      handlers:
+        - default
