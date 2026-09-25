@@ -43,6 +43,12 @@ An explicit `tables.IsDescription` subclass.  When set it is returned directly b
 
 If `_DESCRIPTION` is `None` (the default), `get_description()` auto-generates it from `_H5_TYPES` and caches the result on the class.
 
+<a id="nullable-fields"></a>
+
+#### `_NULLABLE_FIELDS: ClassVar[List[str]]`
+
+Canonical Python field names that round-trip `None` through the empty-string sentinel.  The default is `[]`, which is today's behavior.  Do not list HDF5 column names, even when the field uses `serialization_alias`.  See [Nullable String Sentinels](#nullable-string-sentinels).
+
 ### Aliasing Contract
 
 `_H5_TYPES` keys are **HDF5 column names**.  When a domain field has a different Python name, declare `serialization_alias` (the HDF5 column name) and `validation_alias` (accepting both names on read):
@@ -59,7 +65,7 @@ class StepTableObject(TableObject):
     }
 ```
 
-`to_row()` calls `model_dump(by_alias=True)` internally, so the alias is automatically applied when writing.  `from_row()` passes the column dict through `model_validate()`, which resolves the `validation_alias` back to the canonical Python field name.
+`to_row()` calls `model_dump(by_alias=True)` internally, so the alias is automatically applied when writing.  `from_row()` passes the column dict through `model_validate()`, which resolves the `validation_alias` back to the canonical Python field name.  `_NULLABLE_FIELDS` still lists the Python name (`service_id`), not the column name (`svc`).
 
 ### Methods
 
@@ -74,7 +80,7 @@ table = h5file.create_table('/steps', desc, title='Steps')
 
 #### `to_row(table: tables.Table) -> None`
 
-Append this object as a new row to an open PyTables `Table`.  Encodes string values to bytes for `StringCol` columns; replaces `None` with type-appropriate defaults.  Does **not** flush — call `table.flush()` when the write sequence is complete.
+Append this object as a new row to an open PyTables `Table`.  Encodes string values to bytes for `StringCol` columns; replaces `None` with type-appropriate defaults.  A field listed in `_NULLABLE_FIELDS` stores `None` as `b''` and `from_row()` restores it.  An undeclared `None` still encodes as `b''` and reads back as `''`.  Does **not** flush — call `table.flush()` when the write sequence is complete.
 
 ```python
 with H5Client('data.h5', mode='a') as h5:
@@ -86,7 +92,7 @@ with H5Client('data.h5', mode='a') as h5:
 
 #### `from_row(row: Any) -> TableObject` _(classmethod)_
 
-Construct a `TableObject` from a PyTables `Row` object, a NumPy record, or a plain dict (as returned by `H5Client.read_rows()`).  Decodes bytes to `str` and converts NumPy scalars to Python natives before calling `model_validate`.
+Construct a `TableObject` from a PyTables `Row` object, a NumPy record, or a plain dict (as returned by `H5Client.read_rows()`).  Decodes bytes to `str` and converts NumPy scalars to Python natives before calling `model_validate`.  A declared nullable field whose decoded value is `''` becomes `None`; undeclared fields are not rewritten.
 
 ```python
 rows = h5.read_rows('/steps')
@@ -95,7 +101,7 @@ objs = [StepTableObject.from_row(r) for r in rows]
 
 #### `to_primitive(**overrides) -> Dict[str, Any]`
 
-Serialize to a plain Python dict using canonical field names (no aliases).  Useful for debugging or when dict-based serialization is needed alongside row-based storage.
+Serialize to a plain Python dict using canonical field names (no aliases).  `None` is omitted except for fields listed in `_NULLABLE_FIELDS`, which keep Python `None` so `map()` does not substitute a string default.  Useful for debugging or when dict-based serialization is needed alongside row-based storage.
 
 #### `map(target: Type[Aggregate], **overrides) -> Aggregate`
 
@@ -107,7 +113,7 @@ step_agg = step_obj.map(FeatureStepAggregate)
 
 #### `from_model(model: DomainObject, **overrides) -> TableObject` _(classmethod)_
 
-Create a `TableObject` from an existing domain model or aggregate.  Uses `model_dump(by_alias=False)` to extract canonical field values.
+Create a `TableObject` from an existing domain model or aggregate.  Uses `model_dump(by_alias=False, exclude_none=True)` to extract canonical field values, then puts declared nullable `None` values back so a string default cannot replace them.
 
 ```python
 table_obj = StepTableObject.from_model(step_aggregate)
@@ -153,6 +159,10 @@ _ROLES: ClassVar[Dict[str, Dict[str, Any]]] = {
 
 This ensures `to_attrs()` applies `serialization_alias` values as HDF5 attribute key names by default.  Subclasses may extend `_ROLES` to add `exclude` rules or additional roles while keeping the `'to_h5.attrs'` entry.
 
+### `_NULLABLE_FIELDS`
+
+Same contract as `TableObject._NULLABLE_FIELDS`: canonical Python field names, default `[]`.  `to_attrs()` emits `''` for a declared `None` even when the role sets `exclude_none=True`.  An explicit `exclude` of that field is still honored.  See [Nullable String Sentinels](#nullable-string-sentinels).
+
 ### Aliasing Contract
 
 Declare `serialization_alias` (the HDF5 attribute key name) and `validation_alias` on fields whose Python names differ from the desired attribute keys:
@@ -170,13 +180,13 @@ class FeatureGroupObject(NodeObject):
     }
 ```
 
-`to_attrs()` defaults to the `'to_h5.attrs'` role, so `description` serializes as `'desc'` in HDF5 without any extra steps.  `from_attrs()` uses `model_validate()`, which resolves `validation_alias` back to the Python field name transparently.
+`to_attrs()` defaults to the `'to_h5.attrs'` role, so `description` serializes as `'desc'` in HDF5 without any extra steps.  `from_attrs()` uses `model_validate()`, which resolves `validation_alias` back to the Python field name transparently.  `_NULLABLE_FIELDS` still lists the Python name, not the attribute key.
 
 ### Methods
 
 #### `to_attrs(role: str = 'to_h5.attrs', **overrides) -> Dict[str, Any]`
 
-Serialize this object to a flat dict suitable for writing to `node._v_attrs`.  Delegates to `to_primitive(role=role)`.
+Serialize this object to a flat dict suitable for writing to `node._v_attrs`.  Delegates to `to_primitive(role=role)`, then emits `''` for any declared nullable `None` so `exclude_none` does not drop that key.  Undeclared `None` values are still dropped when the role sets `exclude_none`.
 
 ```python
 group_obj = FeatureGroupObject(name='Calculator', description='Arithmetic ops')
@@ -189,13 +199,62 @@ for k, v in attrs.items():
 
 #### `from_attrs(attrs: Dict[str, Any], **overrides) -> NodeObject` _(classmethod)_
 
-Construct a `NodeObject` from a node attribute dict.  Decodes bytes to `str` and converts NumPy scalars to Python natives before calling `model_validate`.  Pass the result of `H5Client.get_node_attrs()` directly.
+Construct a `NodeObject` from a node attribute dict.  Decodes bytes to `str` and converts NumPy scalars to Python natives before calling `model_validate`.  A declared nullable field whose decoded value is `''` becomes `None`; undeclared fields are not rewritten.  Pass the result of `H5Client.get_node_attrs()` directly.
 
 ```python
 raw = h5.get_node_attrs('/features/calc')
 group_obj = FeatureGroupObject.from_attrs(raw)
 print(group_obj.description)  # 'Arithmetic ops'
 ```
+
+---
+
+## Nullable String Sentinels
+
+HDF5 `StringCol` columns and node attributes cannot store Python `None`.  `TableObject` and `NodeObject` share one convention so an optional string can round-trip `None` without each subclass hand-rolling the conversion.  The sentinel is `''` only.  Numeric and boolean `None` substitutions (`0`, `False`) are unchanged.
+
+Declare the canonical Python field names.  The field must accept `None`.  Assign a new list on the subclass; do not append to the base `[]`, which is shared.
+
+```python
+class StepTableObject(TableObject):
+    service_id: Optional[str] = Field(
+        default='',
+        serialization_alias='svc',
+        validation_alias=AliasChoices('svc', 'service_id'),
+    )
+    label: str = Field(default='')
+
+    _H5_TYPES: ClassVar[Dict[str, Any]] = {
+        'svc': tables.StringCol(256),
+        'label': tables.StringCol(256),
+    }
+    _NULLABLE_FIELDS: ClassVar[List[str]] = [
+        'service_id',
+    ]
+```
+
+Listing a name that is not a field on the class does nothing.  A subclass that does not set `_NULLABLE_FIELDS` behaves as it does today, including a stored `''` that stays `''`.
+
+### Write and read
+
+- **Table write.** `to_row()` still uses `encode_value()`.  `None` on a `StringCol` is stored as `b''`.  For a listed field, `from_row()` restores that empty value to `None`.  An unlisted `None` still encodes as `b''` and reads back as `''`.
+- **Table read.** After `normalize_value()`, <a id="restore-null-sentinels"></a>`restore_null_sentinels()` turns a declared field's stored `''` or `None` into Python `None` before `model_validate()`.  The lookup uses the canonical name, so a column stored as `svc` restores `service_id`.
+- **Attribute write.** `to_attrs()` emits `''` for a declared `None`, even when the role sets `exclude_none`.  <a id="preserve-nullable-nones"></a>`preserve_nullable_nones()` puts that `None` back after the dump, and <a id="apply-attr-null-sentinels"></a>`apply_attr_null_sentinels()` replaces it with `''`.  An explicit `exclude`, or an `include` that does not name the field, is still honored.  Undeclared `None` values are still dropped when `exclude_none` is set.
+- **Attribute read.** `from_attrs()` decodes bytes and scalars, then applies the same `''` → `None` restoration.  A missing key is not invented; the field default stands.
+
+<a id="nullable-field-index"></a>
+
+`nullable_field_index()` maps each listed Python name to the key `model_dump(by_alias=True)` would emit.  Callers list `service_id`, not `svc`.
+
+### Mapping path
+
+`from_model()`, `to_primitive()`, and `map()` keep Python `None` for declared fields.  A domain `None` is not dropped and then replaced by a string default such as `''`.  The collapse to the empty-string sentinel happens only at the HDF5 boundary (`to_row` / `from_row`, `to_attrs` / `from_attrs`).
+
+### `None` and `''` collapse
+
+For a declared nullable field, stored `None` and stored `''` are the same HDF5 value.  Both read back as `None`.  Callers who need a distinct empty string must not list that field.
+
+This convention does not cover non-string dtypes, schema fingerprints, or repository writes.  Those stay with their own stories.
 
 ---
 
