@@ -17,6 +17,7 @@ from tiferet.domain import DomainObject
 from tiferet.mappers import Aggregate
 
 from ..core import NodeObject, TableObject
+from .settings import NodeObjectTestBase, TableObjectTestBase
 
 # *** constants
 
@@ -449,3 +450,57 @@ def test_node_object_round_trip() -> None:
 
     assert restored.name == original.name
     assert restored.description == original.description
+
+# ** test: test_harness_item_table
+class TestHarnessItemTable(TableObjectTestBase):
+    '''
+    Proves TableObjectTestBase collects tests from class variables alone.
+    '''
+
+    # * attribute: table_cls
+    table_cls = ItemTableObject
+
+    # * attribute: sample_data
+    sample_data = {'name': SAMPLE_NAME, 'score': SAMPLE_SCORE}
+
+    # * attribute: equality_fields
+    equality_fields = ['name', 'score']
+
+# ** test: test_harness_item_table_mapped
+class TestHarnessItemTableMapped(TableObjectTestBase):
+    '''
+    Proves map and from_model run when their optional classes are set.
+    '''
+
+    # * attribute: table_cls
+    table_cls = ItemTableObject
+
+    # * attribute: aggregate_cls
+    aggregate_cls = ItemAggregate
+
+    # * attribute: domain_cls
+    domain_cls = ItemDomain
+
+    # * attribute: sample_data
+    sample_data = {'name': SAMPLE_NAME, 'score': SAMPLE_SCORE}
+
+    # * attribute: aggregate_sample_data
+    aggregate_sample_data = {'name': SAMPLE_NAME, 'score': SAMPLE_SCORE}
+
+    # * attribute: equality_fields
+    equality_fields = ['name', 'score']
+
+# ** test: test_harness_meta_node
+class TestHarnessMetaNode(NodeObjectTestBase):
+    '''
+    Proves NodeObjectTestBase collects attribute round-trip tests.
+    '''
+
+    # * attribute: node_cls
+    node_cls = MetaNodeObject
+
+    # * attribute: sample_data
+    sample_data = {'name': 'Calculator', 'description': 'Arithmetic ops'}
+
+    # * attribute: equality_fields
+    equality_fields = ['name', 'description']
