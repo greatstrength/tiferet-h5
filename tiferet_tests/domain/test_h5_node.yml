@@ -1,0 +1,152 @@
+# Additive YAML replicate of H5Node pytest cases (parametrize expanded to four testers).
+
+testers:
+  test_h5_node_required:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Node
+    attributes:
+      path: /features/calc
+      node_type: group
+    tests:
+      h5_node_required_fields:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: node
+        assert:
+          - check: type
+            outcome: node
+            module_path: tiferet_h5.domain.h5
+            class_name: H5Node
+          - check: fields
+            outcome: node
+            fields:
+              path: /features/calc
+              node_type: group
+          - outcome: node
+            attribute: title
+            'null': true
+          - check: equals
+            outcome: node
+            attribute: attrs
+            equals: {}
+
+  test_h5_node_title_attrs:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Node
+    attributes:
+      path: /features/calc/steps
+      node_type: table
+      title: Feature Steps
+      attrs:
+        schema_ver: '1.0'
+    tests:
+      h5_node_with_title_and_attrs:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: node
+        assert:
+          - check: equals
+            outcome: node
+            attribute: title
+            equals: Feature Steps
+          - check: equals
+            outcome: node
+            attribute: attrs
+            equals:
+              schema_ver: '1.0'
+
+  test_h5_node_type_group:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Node
+    attributes: {path: /some/path, node_type: group}
+    tests:
+      h5_node_type_group:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: node
+        assert:
+          - check: equals
+            outcome: node
+            attribute: node_type
+            equals: group
+
+  test_h5_node_type_table:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Node
+    attributes: {path: /some/path, node_type: table}
+    tests:
+      h5_node_type_table:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: node
+        assert:
+          - check: equals
+            outcome: node
+            attribute: node_type
+            equals: table
+
+  test_h5_node_type_array:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Node
+    attributes: {path: /some/path, node_type: array}
+    tests:
+      h5_node_type_array:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: node
+        assert:
+          - check: equals
+            outcome: node
+            attribute: node_type
+            equals: array
+
+  test_h5_node_type_leaf:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Node
+    attributes: {path: /some/path, node_type: leaf}
+    tests:
+      h5_node_type_leaf:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: node
+        assert:
+          - check: equals
+            outcome: node
+            attribute: node_type
+            equals: leaf
+
+  test_h5_node_coerce_type:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Node
+    attributes:
+      path: /n
+      node_type: 1
+    tests:
+      h5_node_coerces_numeric_node_type_to_str:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: node
+        assert:
+          - check: equals
+            outcome: node
+            attribute: node_type
+            equals: '1'
+          - check: type
+            outcome: node
+            attribute: node_type
+            module_path: builtins
+            class_name: str

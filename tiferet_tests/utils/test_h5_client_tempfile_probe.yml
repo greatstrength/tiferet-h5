@@ -1,0 +1,59 @@
+# Probe: live H5Client against tempfile via importlib getattr + __call__.
+testers:
+  test_h5_client_tempfile:
+    module_path: tiferet_h5.utils.h5
+    class_name: H5Client
+    tests:
+      open_file_creates_file:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tempfile
+              attribute: mkdtemp
+            method: mkdtemp
+            as: directory
+          - target:
+              module_path: pathlib
+              attribute: Path
+            method: Path
+            args: [$r.directory, probe.h5]
+            as: path_obj
+          - target:
+              module_path: builtins
+              attribute: str
+            method: str
+            args: [$r.path_obj]
+            as: path
+          - target:
+              module_path: importlib
+              attribute: import_module
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target:
+              module_path: builtins
+              attribute: getattr
+            method: getattr
+            args: [$r.mod, H5Client]
+            as: cls
+          - target: $r.cls
+            method: __call__
+            args: [$r.path]
+            kwargs:
+              mode: w
+            as: client
+          - target: $r.client
+            method: __enter__
+            as: entered
+          - target: $r.entered
+            method: node_exists
+            args: [/]
+            as: root_exists
+          - target: $r.client
+            method: __exit__
+            args: [null, null, null]
+            as: closed
+        assert:
+          - check: equals
+            outcome: root_exists
+            equals: true

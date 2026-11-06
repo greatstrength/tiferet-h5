@@ -1,0 +1,64 @@
+# Additive YAML for exported utils error-code string constants.
+
+testers:
+  test_h5_error_codes:
+    module_path: tiferet_h5.utils.h5
+    class_name: H5Client
+    tests:
+      index_failed_code_constant:
+        conditions: {}
+        execute:
+          - target:
+              module_path: importlib
+              attribute: import_module
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target:
+              module_path: builtins
+              attribute: getattr
+            method: getattr
+            args: [$r.mod, H5_INDEX_FAILED_ID]
+            as: code
+        assert:
+          - check: equals
+            outcome: code
+            equals: H5_INDEX_FAILED
+      schema_mismatch_code_constant:
+        conditions: {}
+        execute:
+          - target:
+              module_path: importlib
+              attribute: import_module
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target:
+              module_path: builtins
+              attribute: getattr
+            method: getattr
+            args: [$r.mod, H5_SCHEMA_MISMATCH_ID]
+            as: code
+        assert:
+          - check: equals
+            outcome: code
+            equals: H5_SCHEMA_MISMATCH
+      compact_failed_code_constant:
+        conditions: {}
+        execute:
+          - target:
+              module_path: importlib
+              attribute: import_module
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target:
+              module_path: builtins
+              attribute: getattr
+            method: getattr
+            args: [$r.mod, H5_COMPACT_FAILED_ID]
+            as: code
+        assert:
+          - check: equals
+            outcome: code
+            equals: H5_COMPACT_FAILED

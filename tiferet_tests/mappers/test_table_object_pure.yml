@@ -1,0 +1,256 @@
+# Additive YAML for pure TableObject helpers (no live HDF5 handle).
+# Source: tiferet_h5/mappers/tests/test_core.py normalize/encode/to_primitive/map/from_model.
+
+testers:
+  test_normalize_value:
+    module_path: tiferet_h5.mappers.core
+    class_name: TableObject
+    tests:
+      normalize_value_bytes:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: normalize_value
+            args: [!!binary aGVsbG8=]
+            as: result
+        assert:
+          - check: equals
+            outcome: result
+            equals: hello
+          - check: type
+            outcome: result
+            module_path: builtins
+            class_name: str
+      normalize_value_python_native_str:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: normalize_value
+            args: [hello]
+            as: result
+        assert:
+          - check: equals
+            outcome: result
+            equals: hello
+      normalize_value_python_native_int:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: normalize_value
+            args: [42]
+            as: result
+        assert:
+          - check: equals
+            outcome: result
+            equals: 42
+      normalize_value_python_native_bool:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: normalize_value
+            args: [true]
+            as: result
+        assert:
+          - check: equals
+            outcome: result
+            equals: true
+
+
+      normalize_value_numpy_scalar:
+        conditions: {}
+        execute:
+          - target:
+              module_path: numpy
+              attribute: float64
+            method: float64
+            args: [3.14]
+            as: scalar
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: normalize_value
+            args: [$r.scalar]
+            as: result
+        assert:
+          - check: type
+            outcome: result
+            module_path: builtins
+            class_name: float
+
+  test_encode_value:
+    module_path: tiferet_h5.mappers.core
+    class_name: TableObject
+    tests:
+      encode_value_str_to_bytes_for_string_col:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tables
+              attribute: StringCol
+            method: StringCol
+            args: [64]
+            as: col
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: encode_value
+            args: [hello, $r.col]
+            as: result
+        assert:
+          - check: equals
+            outcome: result
+            equals: !!binary aGVsbG8=
+      encode_value_none_string_col:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tables
+              attribute: StringCol
+            method: StringCol
+            args: [64]
+            as: col
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: encode_value
+            args: [null, $r.col]
+            as: result
+        assert:
+          - check: equals
+            outcome: result
+            equals: !!binary ""
+      encode_value_none_bool_col:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tables
+              attribute: BoolCol
+            method: BoolCol
+            as: col
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: encode_value
+            args: [null, $r.col]
+            as: result
+        assert:
+          - check: equals
+            outcome: result
+            equals: false
+      encode_value_none_numeric_col:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tables
+              attribute: Float64Col
+            method: Float64Col
+            as: col
+          - target:
+              module_path: tiferet_h5.mappers.core
+              class_name: TableObject
+            method: encode_value
+            args: [null, $r.col]
+            as: result
+        assert:
+          - check: equals
+            outcome: result
+            equals: 0
+
+  test_item_table_object:
+    module_path: tiferet_h5.mappers.tests.test_core
+    class_name: ItemTableObject
+    attributes:
+      name: Widget
+      score: 3.14
+    tests:
+      to_primitive_uses_canonical_names:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: obj
+          - target: $r.obj
+            method: to_primitive
+            as: data
+        assert:
+          - check: equals
+            outcome: data
+            attribute: name
+            equals: Widget
+          - check: equals
+            outcome: data
+            attribute: score
+            equals: 3.14
+      map_produces_aggregate:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: obj
+          - target:
+              module_path: importlib
+              attribute: import_module
+            method: import_module
+            args: [tiferet_h5.mappers.tests.test_core]
+            as: mod
+          - target:
+              module_path: builtins
+              attribute: getattr
+            method: getattr
+            args: [$r.mod, ItemAggregate]
+            as: agg_cls
+          - target: $r.obj
+            method: map
+            args: [$r.agg_cls]
+            as: agg
+        assert:
+          - check: type
+            outcome: agg
+            module_path: tiferet_h5.mappers.tests.test_core
+            class_name: ItemAggregate
+          - check: equals
+            outcome: agg
+            attribute: name
+            equals: Widget
+          - check: equals
+            outcome: agg
+            attribute: score
+            equals: 3.14
+      from_model_creates_table_object:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tiferet_h5.mappers.tests.test_core
+              class_name: ItemDomain
+            method: model_validate
+            args:
+              - name: Widget
+                score: 3.14
+            as: domain_obj
+          - target:
+              module_path: tiferet_h5.mappers.tests.test_core
+              class_name: ItemTableObject
+            method: from_model
+            args: [$r.domain_obj]
+            as: table_obj
+        assert:
+          - check: type
+            outcome: table_obj
+            module_path: tiferet_h5.mappers.tests.test_core
+            class_name: ItemTableObject
+          - check: equals
+            outcome: table_obj
+            attribute: name
+            equals: Widget
+          - check: equals
+            outcome: table_obj
+            attribute: score
+            equals: 3.14

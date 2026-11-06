@@ -1,0 +1,94 @@
+# Additive YAML for NodeObject alias/bytes round trips (no live HDF5).
+
+testers:
+  test_meta_node_object:
+    module_path: tiferet_h5.mappers.tests.test_core
+    class_name: MetaNodeObject
+    attributes:
+      name: Calculator
+      description: Arithmetic ops
+    tests:
+      node_object_to_attrs_applies_alias:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: obj
+          - target: $r.obj
+            method: to_attrs
+            as: attrs
+        assert:
+          - check: equals
+            outcome: attrs
+            attribute: desc
+            equals: Arithmetic ops
+          - check: equals
+            outcome: attrs
+            attribute: name
+            equals: Calculator
+          - outcome: attrs
+            absent: [description]
+      node_object_from_attrs_resolves_alias:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tiferet_h5.mappers.tests.test_core
+              class_name: MetaNodeObject
+            method: from_attrs
+            args:
+              - name: Calculator
+                desc: Arithmetic ops
+            as: obj
+        assert:
+          - check: equals
+            outcome: obj
+            attribute: name
+            equals: Calculator
+          - check: equals
+            outcome: obj
+            attribute: description
+            equals: Arithmetic ops
+      node_object_from_attrs_decodes_bytes:
+        conditions: {}
+        execute:
+          - target:
+              module_path: tiferet_h5.mappers.tests.test_core
+              class_name: MetaNodeObject
+            method: from_attrs
+            args:
+              - name: !!binary Q2FsY3VsYXRvcg==
+                desc: !!binary QXJpdGhtZXRpYyBvcHM=
+            as: obj
+        assert:
+          - check: equals
+            outcome: obj
+            attribute: name
+            equals: Calculator
+          - check: equals
+            outcome: obj
+            attribute: description
+            equals: Arithmetic ops
+      node_object_round_trip:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: original
+          - target: $r.original
+            method: to_attrs
+            as: attrs
+          - target:
+              module_path: tiferet_h5.mappers.tests.test_core
+              class_name: MetaNodeObject
+            method: from_attrs
+            args: [$r.attrs]
+            as: restored
+        assert:
+          - check: equals
+            outcome: restored
+            attribute: name
+            equals: Calculator
+          - check: equals
+            outcome: restored
+            attribute: description
+            equals: Arithmetic ops

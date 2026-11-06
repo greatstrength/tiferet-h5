@@ -1,0 +1,143 @@
+# Additive YAML replicate of H5TableSchema pytest cases.
+
+fixtures:
+  sample_schema:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5TableSchema
+    attributes:
+      node_path: /features/calc
+      title: Calc Features
+      columns:
+        - name: id
+          dtype: string256
+        - name: name
+          dtype: string256
+        - name: score
+          dtype: float64
+
+testers:
+  test_h5_table_schema_required:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5TableSchema
+    attributes:
+      node_path: /items
+    tests:
+      h5_table_schema_required_fields:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: schema
+        assert:
+          - check: type
+            outcome: schema
+            module_path: tiferet_h5.domain.h5
+            class_name: H5TableSchema
+          - check: equals
+            outcome: schema
+            attribute: node_path
+            equals: /items
+          - outcome: schema
+            attribute: title
+            'null': true
+          - check: equals
+            outcome: schema
+            attribute: columns
+            equals: []
+
+  test_h5_table_schema_sample:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5TableSchema
+    attributes:
+      node_path: /features/calc
+    tests:
+      h5_table_schema_with_title_and_columns:
+        conditions:
+          fixtures: [sample_schema]
+        execute:
+          - target:
+              module_path: operator
+              attribute: attrgetter
+            method: attrgetter
+            args: [columns]
+            as: read_columns
+          - target: $r.read_columns
+            method: __call__
+            args: [$fixture.sample_schema]
+            as: columns
+          - target:
+              module_path: builtins
+              attribute: len
+            method: len
+            args: [$r.columns]
+            as: column_count
+          - target:
+              module_path: operator
+              attribute: attrgetter
+            method: attrgetter
+            args: [node_path]
+            as: read_path
+          - target: $r.read_path
+            method: __call__
+            args: [$fixture.sample_schema]
+            as: node_path
+          - target:
+              module_path: operator
+              attribute: attrgetter
+            method: attrgetter
+            args: [title]
+            as: read_title
+          - target: $r.read_title
+            method: __call__
+            args: [$fixture.sample_schema]
+            as: title
+        assert:
+          - check: equals
+            outcome: column_count
+            equals: 3
+          - check: equals
+            outcome: node_path
+            equals: /features/calc
+          - check: equals
+            outcome: title
+            equals: Calc Features
+      h5_table_schema_get_column_found:
+        conditions:
+          fixtures: [sample_schema]
+        execute:
+          - target: $fixture.sample_schema
+            method: get_column
+            args: [name]
+            as: column
+        assert:
+          - check: type
+            outcome: column
+            module_path: tiferet_h5.domain.h5
+            class_name: H5Column
+          - check: fields
+            outcome: column
+            fields:
+              name: name
+              dtype: string256
+      h5_table_schema_get_column_not_found:
+        conditions:
+          fixtures: [sample_schema]
+        execute:
+          - target: $fixture.sample_schema
+            method: get_column
+            args: [nonexistent]
+            as: column
+        assert:
+          - outcome: column
+            'null': true
+      h5_table_schema_column_names:
+        conditions:
+          fixtures: [sample_schema]
+        execute:
+          - target: $fixture.sample_schema
+            method: column_names
+            as: names
+        assert:
+          - check: equals
+            outcome: names
+            equals: [id, name, score]

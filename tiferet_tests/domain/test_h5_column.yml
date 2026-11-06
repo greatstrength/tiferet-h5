@@ -1,0 +1,97 @@
+# Additive YAML replicate of H5Column pytest cases. Pytest originals remain the gate.
+# Dialect notes (2.2.2b1): self.new takes no kwargs; null assert uses 'null': true or check: 'null'.
+
+testers:
+  test_h5_column_required:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Column
+    attributes:
+      name: price
+      dtype: float64
+    tests:
+      h5_column_required_fields:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: column
+        assert:
+          - check: type
+            outcome: column
+            module_path: tiferet_h5.domain.h5
+            class_name: H5Column
+          - check: fields
+            outcome: column
+            fields:
+              name: price
+              dtype: float64
+          - outcome: column
+            attribute: default
+            'null': true
+          - outcome: column
+            attribute: position
+            'null': true
+
+  test_h5_column_default:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Column
+    attributes:
+      name: active
+      dtype: bool
+      default: true
+    tests:
+      h5_column_with_default:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: column
+        assert:
+          - check: equals
+            outcome: column
+            attribute: default
+            equals: true
+
+  test_h5_column_position:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Column
+    attributes:
+      name: id
+      dtype: string256
+      position: 0
+    tests:
+      h5_column_with_position:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: column
+        assert:
+          - check: equals
+            outcome: column
+            attribute: position
+            equals: 0
+
+  test_h5_column_coerce_name:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Column
+    attributes:
+      name: 1
+      dtype: string
+    tests:
+      h5_column_coerces_numeric_name_to_str:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: column
+        assert:
+          - check: equals
+            outcome: column
+            attribute: name
+            equals: '1'
+          - check: type
+            outcome: column
+            attribute: name
+            module_path: builtins
+            class_name: str

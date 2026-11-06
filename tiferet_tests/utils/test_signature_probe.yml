@@ -1,0 +1,49 @@
+# Probe: inspect.signature parameter list parity for compact().
+testers:
+  test_compact_signature:
+    module_path: tiferet_h5.utils.h5
+    class_name: H5Client
+    tests:
+      compact_param_names:
+        conditions: {}
+        execute:
+          - target:
+              module_path: importlib
+              attribute: import_module
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target:
+              module_path: builtins
+              attribute: getattr
+            method: getattr
+            args: [$r.mod, H5Client]
+            as: cls
+          - target:
+              module_path: builtins
+              attribute: getattr
+            method: getattr
+            args: [$r.cls, compact]
+            as: method
+          - target:
+              module_path: inspect
+              attribute: signature
+            method: signature
+            args: [$r.method]
+            as: sig
+          - target:
+              module_path: builtins
+              attribute: getattr
+            method: getattr
+            args: [$r.sig, parameters]
+            as: params
+          - target:
+              module_path: builtins
+              attribute: list
+            method: list
+            args: [$r.params]
+            as: names
+        assert:
+          - check: equals
+            outcome: names
+            equals: [self, filters]

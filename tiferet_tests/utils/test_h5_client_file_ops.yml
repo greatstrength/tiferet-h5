@@ -1,0 +1,227 @@
+# Additive YAML for selected H5Client file ops. Pytest originals remain the gate.
+# Pattern: tempfile.mkdtemp + Path + H5Client via importlib getattr __call__.
+
+testers:
+  test_h5_client_file_ops:
+    module_path: tiferet_h5.utils.h5
+    class_name: H5Client
+    tests:
+      create_group:
+        conditions: {}
+        execute:
+          - target: {module_path: tempfile, attribute: mkdtemp}
+            method: mkdtemp
+            as: directory
+          - target: {module_path: pathlib, attribute: Path}
+            method: Path
+            args: [$r.directory, g.h5]
+            as: path_obj
+          - target: {module_path: builtins, attribute: str}
+            method: str
+            args: [$r.path_obj]
+            as: path
+          - target: {module_path: importlib, attribute: import_module}
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target: {module_path: builtins, attribute: getattr}
+            method: getattr
+            args: [$r.mod, H5Client]
+            as: cls
+          - target: $r.cls
+            method: __call__
+            args: [$r.path]
+            kwargs: {mode: w}
+            as: client
+          - target: $r.client
+            method: __enter__
+            as: h5
+          - target: $r.h5
+            method: create_group
+            args: [/features]
+            as: created
+          - target: $r.h5
+            method: node_exists
+            args: [/features]
+            as: exists
+          - target: $r.client
+            method: __exit__
+            args: [null, null, null]
+            as: closed
+        assert:
+          - check: equals
+            outcome: exists
+            equals: true
+      create_group_nested:
+        conditions: {}
+        execute:
+          - target: {module_path: tempfile, attribute: mkdtemp}
+            method: mkdtemp
+            as: directory
+          - target: {module_path: pathlib, attribute: Path}
+            method: Path
+            args: [$r.directory, gn.h5]
+            as: path_obj
+          - target: {module_path: builtins, attribute: str}
+            method: str
+            args: [$r.path_obj]
+            as: path
+          - target: {module_path: importlib, attribute: import_module}
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target: {module_path: builtins, attribute: getattr}
+            method: getattr
+            args: [$r.mod, H5Client]
+            as: cls
+          - target: $r.cls
+            method: __call__
+            args: [$r.path]
+            kwargs: {mode: w}
+            as: client
+          - target: $r.client
+            method: __enter__
+            as: h5
+          - target: $r.h5
+            method: create_group
+            args: [/features/calc]
+            as: created
+          - target: $r.h5
+            method: node_exists
+            args: [/features/calc]
+            as: exists
+          - target: $r.client
+            method: __exit__
+            args: [null, null, null]
+            as: closed
+        assert:
+          - check: equals
+            outcome: exists
+            equals: true
+      node_exists_false:
+        conditions: {}
+        execute:
+          - target: {module_path: tempfile, attribute: mkdtemp}
+            method: mkdtemp
+            as: directory
+          - target: {module_path: pathlib, attribute: Path}
+            method: Path
+            args: [$r.directory, nf.h5]
+            as: path_obj
+          - target: {module_path: builtins, attribute: str}
+            method: str
+            args: [$r.path_obj]
+            as: path
+          - target: {module_path: importlib, attribute: import_module}
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target: {module_path: builtins, attribute: getattr}
+            method: getattr
+            args: [$r.mod, H5Client]
+            as: cls
+          - target: $r.cls
+            method: __call__
+            args: [$r.path]
+            kwargs: {mode: w}
+            as: client
+          - target: $r.client
+            method: __enter__
+            as: h5
+          - target: $r.h5
+            method: node_exists
+            args: [/missing]
+            as: exists
+          - target: $r.client
+            method: __exit__
+            args: [null, null, null]
+            as: closed
+        assert:
+          - check: equals
+            outcome: exists
+            equals: false
+      context_manager_opens_and_closes:
+        conditions: {}
+        execute:
+          - target: {module_path: tempfile, attribute: mkdtemp}
+            method: mkdtemp
+            as: directory
+          - target: {module_path: pathlib, attribute: Path}
+            method: Path
+            args: [$r.directory, cm.h5]
+            as: path_obj
+          - target: {module_path: builtins, attribute: str}
+            method: str
+            args: [$r.path_obj]
+            as: path
+          - target: {module_path: importlib, attribute: import_module}
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target: {module_path: builtins, attribute: getattr}
+            method: getattr
+            args: [$r.mod, H5Client]
+            as: cls
+          - target: $r.cls
+            method: __call__
+            args: [$r.path]
+            kwargs: {mode: w}
+            as: client
+          - target: $r.client
+            method: __enter__
+            as: h5
+          - target: {module_path: builtins, attribute: getattr}
+            method: getattr
+            args: [$r.h5, h5file]
+            as: handle_open
+          - target: $r.client
+            method: __exit__
+            args: [null, null, null]
+            as: closed
+          - target: {module_path: builtins, attribute: getattr}
+            method: getattr
+            args: [$r.client, h5file]
+            as: handle_closed
+        assert:
+          - outcome: handle_closed
+            'null': true
+      ensure_parent_groups_unopened_raises:
+        conditions: {}
+        execute:
+          - target: {module_path: tempfile, attribute: mkdtemp}
+            method: mkdtemp
+            as: directory
+          - target: {module_path: pathlib, attribute: Path}
+            method: Path
+            args: [$r.directory, up.h5]
+            as: path_obj
+          - target: {module_path: builtins, attribute: str}
+            method: str
+            args: [$r.path_obj]
+            as: path
+          - target: {module_path: importlib, attribute: import_module}
+            method: import_module
+            args: [tiferet_h5.utils.h5]
+            as: mod
+          - target: {module_path: builtins, attribute: getattr}
+            method: getattr
+            args: [$r.mod, H5Client]
+            as: cls
+          - target: $r.cls
+            method: __call__
+            args: [$r.path]
+            kwargs: {mode: w}
+            as: client
+          - target: $r.client
+            method: ensure_parent_groups
+            args: [/a/b]
+            raises: true
+            as: failure
+        assert:
+          - check: type
+            outcome: failure
+            module_path: tiferet.interfaces
+            class_name: ServiceError
+          - check: error_code
+            outcome: failure
+            error_code: H5_CONN_NOT_INITIALIZED
