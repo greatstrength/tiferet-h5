@@ -186,6 +186,7 @@ testers:
           - outcome: handle_closed
             'null': true
       ensure_parent_groups_unopened_raises:
+        # Proto tip exposes private _ensure_parent_groups (public ensure_parent_groups is on main).
         conditions: {}
         execute:
           - target: {module_path: tempfile, attribute: mkdtemp}
@@ -213,7 +214,7 @@ testers:
             kwargs: {mode: w}
             as: client
           - target: $r.client
-            method: ensure_parent_groups
+            method: _ensure_parent_groups
             args: [/a/b]
             raises: true
             as: failure
