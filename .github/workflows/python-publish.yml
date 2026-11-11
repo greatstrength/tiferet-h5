@@ -14,12 +14,10 @@ jobs:
       matrix:
         python-version: ["3.10"]
         # Explicit tiferet-version coverage for the pyproject.toml pin
-        # (currently `tiferet>=2.0.3,<2.1`). 2.0.3 is the *only* released
-        # version inside that range as of this workflow (verified against
-        # PyPI) -- add more entries here as tiferet ships 2.0.4+ or a 2.1
-        # prerelease before beta freeze, so the range is never wider than
-        # what CI has actually exercised.
-        tiferet-version: ["2.0.3"]
+        # (currently `tiferet==2.2.2b1`). Keep this matrix entry identical to
+        # the package build baseline; widen only when pyproject.toml changes
+        # and CI has exercised the new pin.
+        tiferet-version: ["2.2.2b1"]
 
     steps:
       - name: Checkout code
