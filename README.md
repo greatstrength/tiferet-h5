@@ -7,12 +7,12 @@ HDF5 infrastructure extension for the [Tiferet](https://github.com/greatstrength
 ## Requirements
 
 - Python ≥ 3.10
-- `tiferet >= 2.0.3, < 2.1`
+- `tiferet==2.2.2b1`
 - `tables >= 3.10.0` (PyTables)
 
 ## Release Status
 
-`tiferet-h5` is at `1.0.0b2`. The `1.0.0a8` cluster remains frozen as history; this beta extends the prototype catalog with the null-sentinel convention and missing-file repository reads. See [CHANGELOG.md](CHANGELOG.md) for the full history.
+`tiferet-h5` is at `1.0.1a1`. The `1.0.0a8` cluster remains frozen as history. See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ## Async Usage
 
