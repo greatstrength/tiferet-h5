@@ -1006,10 +1006,14 @@ def test_compact_copy_failure_raises(h5_with_table: Path, monkeypatch: pytest.Mo
         def fail_copy(*args, **kwargs):
             raise tables.HDF5ExtError('boom')
 
-        monkeypatch.setattr(h5.h5file, 'copy_children', fail_copy)
+        # Scope the instance patch inside the open block: PyTables
+        # File.close() clears the instance __dict__, so a function-scoped
+        # monkeypatch undo after close would fail on delattr.
+        with monkeypatch.context() as mp:
+            mp.setattr(h5.h5file, 'copy_children', fail_copy)
 
-        with pytest.raises(ServiceError) as exc_info:
-            h5.compact()
+            with pytest.raises(ServiceError) as exc_info:
+                h5.compact()
 
     assert exc_info.value.error_code == const.H5_COMPACT_FAILED_ID
     assert isinstance(exc_info.value.__cause__, tables.HDF5ExtError)
