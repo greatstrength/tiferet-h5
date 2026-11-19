@@ -1,0 +1,25 @@
+# Gate self-check fixture. Outside testpaths and outside the repository
+# tiferet_tests/ tree, so the normal suite does not discover it.
+# side_effect is a top-level execute-step key. On tiferet==2.2.3 that is
+# rejected as FAILED / INVALID_MODEL_ATTRIBUTE. A case-level side_effect
+# is a load error and is not this fixture.
+testers:
+  probe:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Column
+    attributes:
+      name: price
+      dtype: float64
+    tests:
+      top_level_side_effect:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            side_effect: true
+            as: column
+        assert:
+          - check: equals
+            outcome: column
+            attribute: name
+            equals: price

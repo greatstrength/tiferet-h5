@@ -1,0 +1,22 @@
+# Gate self-check fixture. Outside testpaths and outside the repository
+# tiferet_tests/ tree, so the normal suite does not discover it.
+# A wrong expected value must be rejected as FAILED / PHASE_CHECK_FAILED.
+testers:
+  probe:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Column
+    attributes:
+      name: price
+      dtype: float64
+    tests:
+      wrong_name:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: column
+        assert:
+          - check: equals
+            outcome: column
+            attribute: name
+            equals: 'not-price'

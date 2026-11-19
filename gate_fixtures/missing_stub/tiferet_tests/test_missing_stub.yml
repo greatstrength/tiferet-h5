@@ -1,0 +1,21 @@
+# Gate self-check fixture. There is no paired tests/test_missing_stub.py.
+# The gate must reject it as a missing stub and must not run tiferet-tester.
+testers:
+  probe:
+    module_path: tiferet_h5.domain.h5
+    class_name: H5Column
+    attributes:
+      name: price
+      dtype: float64
+    tests:
+      would_pass_if_a_stub_existed:
+        conditions: {}
+        execute:
+          - target: self
+            method: new
+            as: column
+        assert:
+          - check: equals
+            outcome: column
+            attribute: name
+            equals: price

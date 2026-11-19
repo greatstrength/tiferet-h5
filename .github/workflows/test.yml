@@ -1,0 +1,530 @@
+name: Test tiferet-h5
+
+on:
+  push:
+    branches:
+      - v1.x-proto
+      - v1.x-proto-build
+  pull_request:
+    branches:
+      - v1.x-proto
+      - v1.x-proto-build
+
+permissions:
+  contents: read
+
+# Shared inline gate. Both jobs eval this. Do not move it to a repository script.
+# Observed tiferet==2.2.3 `module run` stdout, not guessed:
+#   tiferet_tests/<rel>.yml::<tester>::<case> PASSED|FAILED
+#   {"error_code": "<CODE>", ...}   # only after FAILED; read this field
+#   <failed> failed, <passed> passed | <n> failed | <n> passed
+# Stderr ERROR lines omit the error_code. A passing line may contain the
+# substring error_code; that is not a failure.
+env:
+  HYBRID_GATE: |
+    report_get() {
+      local key="$1"
+      local file="$2"
+      local line
+      line=$(grep -E "^${key}=" "$file" | head -n 1 || true)
+      printf '%s' "${line#"${key}="}"
+    }
+
+    judge_tester_output() {
+      local stdout_path="$1"
+      local exit_code="$2"
+      local report_path="$3"
+      python - "$stdout_path" "$exit_code" "$report_path" <<'PY'
+    import json
+    import pathlib
+    import re
+    import sys
+
+    CASE_RE = re.compile(r'^(tiferet_tests/\S+\.yml::\S+) (PASSED|FAILED)$')
+    COUNT_BOTH_RE = re.compile(r'^(\d+) failed, (\d+) passed$')
+    COUNT_FAILED_RE = re.compile(r'^(\d+) failed$')
+    COUNT_PASSED_RE = re.compile(r'^(\d+) passed$')
+    PHASE_CODES = (
+        'INVALID_MODEL_ATTRIBUTE',
+        'PHASE_CHECK_FAILED',
+        'PHASE_STEP_FAILED',
+    )
+
+    def parse_count(line):
+        both = COUNT_BOTH_RE.match(line)
+        if both:
+            return int(both.group(1)), int(both.group(2)), line
+        failed = COUNT_FAILED_RE.match(line)
+        if failed:
+            return int(failed.group(1)), 0, line
+        passed = COUNT_PASSED_RE.match(line)
+        if passed:
+            return 0, int(passed.group(1)), line
+        return None
+
+    def write_report(path, fields):
+        lines = ['{0}={1}'.format(key, fields[key]) for key in fields]
+        pathlib.Path(path).write_text('\n'.join(lines) + '\n')
+
+    def judge(stdout_text, exit_code):
+        text = stdout_text.replace('\r\n', '\n').replace('\r', '\n')
+        lines = text.splitlines()
+        cases = []
+        count = None
+        summary = 'ok'
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            if line == '':
+                summary = 'unparseable'
+                break
+            case_match = CASE_RE.match(line)
+            if case_match:
+                status = case_match.group(2)
+                context_lines = []
+                index += 1
+                if status == 'FAILED':
+                    while index < len(lines):
+                        nxt = lines[index]
+                        if nxt == '' or CASE_RE.match(nxt) or parse_count(nxt):
+                            break
+                        context_lines.append(nxt)
+                        index += 1
+                cases.append((case_match.group(1), status, '\n'.join(context_lines)))
+                continue
+            parsed = parse_count(line)
+            if parsed:
+                if count is not None or index != len(lines) - 1:
+                    summary = 'unparseable'
+                    break
+                count = parsed
+                index += 1
+                continue
+            summary = 'unparseable'
+            break
+        if index != len(lines):
+            summary = 'unparseable'
+        failed_cases = [case for case in cases if case[1] == 'FAILED']
+        passed_cases = [case for case in cases if case[1] == 'PASSED']
+        if count is None:
+            summary = 'missing' if summary == 'ok' else summary
+            if not lines:
+                summary = 'missing'
+        elif summary == 'ok' and (count[0] != len(failed_cases) or count[1] != len(passed_cases)):
+            summary = 'unparseable'
+        codes = []
+        for _node, status, context in cases:
+            if status != 'FAILED' or not context:
+                continue
+            try:
+                payload = json.loads(context)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and 'error_code' in payload:
+                codes.append(str(payload['error_code']))
+        code_set = set(codes)
+        if summary == 'missing':
+            primary = 'missing_summary'
+        elif summary == 'unparseable':
+            primary = 'unparseable_summary'
+        elif 'INVALID_MODEL_ATTRIBUTE' in code_set:
+            primary = 'invalid_model_attribute'
+        elif 'PHASE_CHECK_FAILED' in code_set:
+            primary = 'phase_check_failed'
+        elif 'PHASE_STEP_FAILED' in code_set:
+            primary = 'phase_step_failed'
+        elif failed_cases:
+            primary = 'failed_status'
+        elif count[0] != 0:
+            primary = 'failed_count'
+        elif exit_code != 0:
+            primary = 'nonzero_exit'
+        elif code_set.intersection(PHASE_CODES):
+            primary = 'unexpected'
+        else:
+            primary = 'pass'
+        return {
+            'primary': primary,
+            'exit_code': str(exit_code),
+            'passed_count': '' if count is None else str(count[1]),
+            'failed_count': '' if count is None else str(count[0]),
+            'summary': summary,
+            'codes': ','.join(codes),
+            'statuses': ','.join(case[1] for case in cases),
+            'count_line': '' if count is None else count[2],
+            'ran_tester': '1',
+        }
+
+    stdout_text = pathlib.Path(sys.argv[1]).read_text()
+    exit_code = int(sys.argv[2])
+    report = sys.argv[3]
+    write_report(report, judge(stdout_text, exit_code))
+    PY
+    }
+
+    stub_for_yaml() {
+      local yaml="$1"
+      local yaml_root="$2"
+      local stub_root="$3"
+      local rel="${yaml#"${yaml_root}/"}"
+      printf '%s/%s.py' "$stub_root" "${rel%.yml}"
+    }
+
+    classify_yaml_module() {
+      local yaml="$1"
+      local stub="$2"
+      local base_dir="$3"
+      local report="$4"
+      local out err exit_code
+      if [[ ! -f "$stub" ]]; then
+        cat > "$report" <<'EOF'
+    primary=missing_stub
+    ran_tester=0
+    exit_code=
+    passed_count=
+    failed_count=
+    summary=missing
+    codes=
+    statuses=
+    count_line=
+    EOF
+        return 0
+      fi
+      out=$(mktemp)
+      err=$(mktemp)
+      exit_code=0
+      tiferet-tester module run "$stub" --base-dir "$base_dir" >"$out" 2>"$err" || exit_code=$?
+      cp "$out" "${report}.stdout"
+      cp "$err" "${report}.stderr"
+      judge_tester_output "$out" "$exit_code" "$report"
+      rm -f "$out" "$err"
+    }
+
+    yaml_modules() {
+      local root="$1"
+      (
+        cd "$root"
+        find tiferet_tests -type f -name 'test_*.yml' | sort
+      )
+    }
+
+    run_yaml_gate() {
+      local root="$1"
+      local failed=0
+      local seen_probe=0
+      local yaml_list=""
+      local yaml stub report primary
+      cd "$root"
+      yaml_list=$(yaml_modules "$root")
+      if [[ -n "$yaml_list" ]]; then
+        while IFS= read -r yaml; do
+          [[ -n "$yaml" ]] || continue
+          stub=$(stub_for_yaml "$yaml" tiferet_tests tests)
+          report=$(mktemp)
+          classify_yaml_module "$root/$yaml" "$root/$stub" "$root" "$report"
+          primary=$(report_get primary "$report")
+          echo "yaml-gate ${yaml} primary=${primary} exit=$(report_get exit_code "$report") count=$(report_get count_line "$report") codes=$(report_get codes "$report")"
+          if [[ "$yaml" == "tiferet_tests/utils/test_h5_client_raises_probe.yml" ]]; then
+            seen_probe=1
+          fi
+          if [[ "$primary" != pass ]]; then
+            failed=1
+            echo "yaml-gate tester stdout:"
+            cat "${report}.stdout" 2>/dev/null || true
+            echo "yaml-gate tester stderr:"
+            cat "${report}.stderr" 2>/dev/null || true
+          fi
+          rm -f "$report" "${report}.stdout" "${report}.stderr"
+        done <<EOF
+    $yaml_list
+    EOF
+      fi
+      if [[ "$seen_probe" -ne 1 ]]; then
+        echo "yaml-gate missing positive control tiferet_tests/utils/test_h5_client_raises_probe.yml"
+        failed=1
+      fi
+      if [[ "$failed" -ne 0 ]]; then
+        return 1
+      fi
+      return 0
+    }
+
+    expect_fixture() {
+      local label="$1"
+      local yaml="$2"
+      local stub="$3"
+      local base_dir="$4"
+      local expected="$5"
+      local report primary codes statuses ran exit_code
+      if [[ ! -f "$yaml" ]]; then
+        echo "self-check ${label} fixture yaml missing: ${yaml}"
+        return 1
+      fi
+      report=$(mktemp)
+      classify_yaml_module "$yaml" "$stub" "$base_dir" "$report"
+      primary=$(report_get primary "$report")
+      codes=$(report_get codes "$report")
+      statuses=$(report_get statuses "$report")
+      ran=$(report_get ran_tester "$report")
+      exit_code=$(report_get exit_code "$report")
+      echo "self-check ${label} primary=${primary} codes=${codes} statuses=${statuses} ran_tester=${ran} exit=${exit_code}"
+      local ok=0
+      if [[ "$primary" != "$expected" ]]; then
+        echo "self-check ${label} expected primary=${expected}"
+        ok=1
+      fi
+      if [[ "$expected" == pass ]]; then
+        if [[ -n "$codes" || "$statuses" == *FAILED* || "$exit_code" != 0 ]]; then
+          echo "self-check ${label} passing negative test was rejected"
+          ok=1
+        fi
+      fi
+      if [[ "$expected" == phase_check_failed ]]; then
+        if [[ "$codes" != PHASE_CHECK_FAILED || "$statuses" != FAILED || "$exit_code" == 0 ]]; then
+          echo "self-check ${label} expected FAILED / PHASE_CHECK_FAILED"
+          ok=1
+        fi
+      fi
+      if [[ "$expected" == invalid_model_attribute ]]; then
+        if [[ "$codes" != INVALID_MODEL_ATTRIBUTE || "$statuses" != FAILED || "$exit_code" == 0 ]]; then
+          echo "self-check ${label} expected FAILED / INVALID_MODEL_ATTRIBUTE"
+          ok=1
+        fi
+      fi
+      if [[ "$expected" == missing_stub ]]; then
+        if [[ "$ran" != 0 || -f "$stub" || "$exit_code" != "" ]]; then
+          echo "self-check ${label} expected a missing stub and no tester run"
+          ok=1
+        fi
+      fi
+      if [[ "$ok" -ne 0 ]]; then
+        echo "self-check ${label} tester stdout:"
+        cat "${report}.stdout" 2>/dev/null || true
+        echo "self-check ${label} tester stderr:"
+        cat "${report}.stderr" 2>/dev/null || true
+        rm -f "$report" "${report}.stdout" "${report}.stderr"
+        return 1
+      fi
+      rm -f "$report" "${report}.stdout" "${report}.stderr"
+      return 0
+    }
+
+    check_parser_contracts() {
+      local out report primary
+      out=$(mktemp)
+      report=$(mktemp)
+      cat > "$out" <<'EOF'
+    tiferet_tests/utils/test_error_code_constants.yml::probe::keeps_error_code_name PASSED
+    1 passed
+    EOF
+      judge_tester_output "$out" 0 "$report"
+      primary=$(report_get primary "$report")
+      if [[ "$primary" != pass || -n "$(report_get codes "$report")" ]]; then
+        echo "passing summary containing error_code was rejected: ${primary}"
+        rm -f "$out" "$report"
+        return 1
+      fi
+      cat > "$out" <<'EOF'
+    tiferet_tests/domain/test_h5_column.yml::probe::one PASSED
+    tiferet_tests/domain/test_bad_assert.yml::probe::wrong_name FAILED
+    {"error_code": "PHASE_CHECK_FAILED", "message": "Phase check equals failed: x", "check": "equals", "detail": "x"}
+    1 failed, 1 passed
+    EOF
+      judge_tester_output "$out" 1 "$report"
+      primary=$(report_get primary "$report")
+      if [[ "$primary" != phase_check_failed || "$(report_get count_line "$report")" != "1 failed, 1 passed" ]]; then
+        echo "mixed count line was not parsed: ${primary} count=$(report_get count_line "$report")"
+        rm -f "$out" "$report"
+        return 1
+      fi
+      rm -f "$out" "$report"
+      echo "self-check parser contracts passed"
+      return 0
+    }
+
+    run_gate_self_check() {
+      local root="$1"
+      local failed=0
+      local yaml stub collect collect_exit py_out py_exit
+      cd "$root"
+      if ! check_parser_contracts; then
+        failed=1
+      fi
+      yaml="gate_fixtures/wrong_expected/tiferet_tests/test_wrong_expected.yml"
+      stub=$(stub_for_yaml "$yaml" gate_fixtures/wrong_expected/tiferet_tests gate_fixtures/wrong_expected/tests)
+      if ! expect_fixture wrong_expected "$root/$yaml" "$root/$stub" "$root" phase_check_failed; then
+        failed=1
+      fi
+      yaml="gate_fixtures/side_effect/tiferet_tests/test_side_effect.yml"
+      stub=$(stub_for_yaml "$yaml" gate_fixtures/side_effect/tiferet_tests gate_fixtures/side_effect/tests)
+      if ! expect_fixture side_effect "$root/$yaml" "$root/$stub" "$root" invalid_model_attribute; then
+        failed=1
+      fi
+      yaml="gate_fixtures/missing_stub/tiferet_tests/test_missing_stub.yml"
+      stub=$(stub_for_yaml "$yaml" gate_fixtures/missing_stub/tiferet_tests gate_fixtures/missing_stub/tests)
+      if ! expect_fixture missing_stub "$root/$yaml" "$root/$stub" "$root" missing_stub; then
+        failed=1
+      fi
+      if ! expect_fixture positive_control \
+        "$root/tiferet_tests/utils/test_h5_client_raises_probe.yml" \
+        "$root/tests/utils/test_h5_client_raises_probe.py" \
+        "$root" \
+        pass; then
+        failed=1
+      fi
+      if yaml_modules "$root" | grep -F gate_fixtures; then
+        echo "normal yaml gate discovered gate_fixtures"
+        failed=1
+      fi
+      collect=$(mktemp)
+      collect_exit=0
+      python -m pytest --collect-only -q >"$collect" 2>&1 || collect_exit=$?
+      if [[ "$collect_exit" -ne 0 ]]; then
+        echo "normal pytest collection failed"
+        cat "$collect"
+        failed=1
+      elif grep -F gate_fixtures "$collect"; then
+        echo "normal pytest discovered gate_fixtures"
+        failed=1
+      else
+        echo "self-check normal pytest did not discover gate_fixtures"
+      fi
+      rm -f "$collect"
+      if grep -E 'pytest\.mark\.(skip|xfail)|pytest\.skip|pytest\.xfail' gate_fixtures/failing_pytest/test_gate_reject.py; then
+        echo "failing pytest fixture hides the failure"
+        failed=1
+      fi
+      py_out=$(mktemp)
+      py_exit=0
+      (
+        cd "$root/gate_fixtures/failing_pytest"
+        python -m pytest --verbose test_gate_reject.py
+      ) >"$py_out" 2>&1 || py_exit=$?
+      echo "self-check failing pytest exit=${py_exit}"
+      if [[ "$py_exit" -eq 0 ]]; then
+        echo "self-check failing pytest was accepted"
+        cat "$py_out"
+        failed=1
+      elif [[ "$py_exit" -ne 1 ]] || ! grep -F 'test_gate_self_check_rejects_failing_case' "$py_out" | grep -F FAILED >/dev/null; then
+        echo "self-check failing pytest rejected for a different reason"
+        cat "$py_out"
+        failed=1
+      else
+        echo "self-check failing pytest rejected as FAILED"
+      fi
+      rm -f "$py_out"
+      if [[ "$failed" -ne 0 ]]; then
+        return 1
+      fi
+      return 0
+    }
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: pytest and tiferet-tester
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "tiferet==2.2.3"
+          python -m pip install ".[test]"
+
+      - name: Log runtime
+        run: |
+          python - <<'PY'
+          import sys
+          import tables
+          import tiferet
+          print("Python:", sys.version)
+          print("tiferet:", tiferet.__version__)
+          print("tables.__version__:", tables.__version__)
+          print("tables.hdf5_version:", tables.hdf5_version)
+          if tiferet.__version__ != "2.2.3":
+              raise SystemExit("tiferet pin drift: {0}".format(tiferet.__version__))
+          PY
+
+      # Step A. Pytest is required and blocking. It must exit 0.
+      # No skip or xfail is added to hide a failure.
+      # Pytest uses pyproject testpaths. Both declared trees:
+      #   tiferet_h5
+      #   examples/catalog_app/tests
+      # Docstring-only YAML stubs under tests/ stay outside testpaths.
+      # gate_fixtures/ stays outside testpaths and outside tiferet_tests/.
+      - name: Run pytest
+        run: python -m pytest --verbose
+
+      # Step B. Pair each tiferet_tests/**/test_*.yml with tests/**/test_*.py
+      # and run tiferet-tester module run <stub> --base-dir <repo root>.
+      - name: Run tiferet-tester gate
+        run: |
+          eval "$HYBRID_GATE"
+          if ! run_yaml_gate "$GITHUB_WORKSPACE"; then
+            exit 1
+          fi
+
+  gate-self-check:
+    name: gate self-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "tiferet==2.2.3"
+          python -m pip install ".[test]"
+
+      - name: Log runtime
+        run: |
+          python - <<'PY'
+          import sys
+          import tables
+          import tiferet
+          print("Python:", sys.version)
+          print("tiferet:", tiferet.__version__)
+          print("tables.__version__:", tables.__version__)
+          print("tables.hdf5_version:", tables.hdf5_version)
+          if tiferet.__version__ != "2.2.3":
+              raise SystemExit("tiferet pin drift: {0}".format(tiferet.__version__))
+          PY
+
+      # Same inline gate. Passes only when each planned rejection occurs:
+      # (a) wrong expected value -> PHASE_CHECK_FAILED / FAILED
+      # (b) top-level side_effect -> INVALID_MODEL_ATTRIBUTE
+      # (c) YAML module with no paired stub -> missing stub
+      # (d) explicit failing pytest case from gate_fixtures/failing_pytest
+      - name: Run gate self-check
+        run: |
+          eval "$HYBRID_GATE"
+          if ! run_gate_self_check "$GITHUB_WORKSPACE"; then
+            exit 1
+          fi
