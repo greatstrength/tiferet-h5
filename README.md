@@ -14,7 +14,7 @@ The proven platform for this line is Linux. `tiferet-h5` ships no file-lock help
 
 ## Release Status
 
-`tiferet-h5` is at `1.0.1a1`. The `1.0.0a8` cluster remains frozen as history. See [CHANGELOG.md](CHANGELOG.md) for the full history.
+`tiferet-h5` is at `1.0.1a2`. The `1.0.0a8` cluster remains frozen as history. See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ## Async Usage
 
