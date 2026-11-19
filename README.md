@@ -10,6 +10,8 @@ HDF5 infrastructure extension for the [Tiferet](https://github.com/greatstrength
 - `tiferet==2.2.3`
 - `tables >= 3.10.0` (PyTables)
 
+The proven platform for this line is Linux. `tiferet-h5` ships no file-lock helper (sync-only, single writer). See [Concurrency](docs/guides/utils/h5.md#concurrency).
+
 ## Release Status
 
 `tiferet-h5` is at `1.0.1a1`. The `1.0.0a8` cluster remains frozen as history. See [CHANGELOG.md](CHANGELOG.md) for the full history.
