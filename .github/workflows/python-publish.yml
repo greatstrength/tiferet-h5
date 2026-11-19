@@ -1,24 +1,169 @@
 name: Build and Publish tiferet-h5
 
+# Alpha tag pushes may upload. Beta and final versions upload only on
+# release.published. Alpha release-publication events do not upload. Beta tag
+# pushes are not a trigger and must not upload.
+#
+# Finals require Chief authorization. This workflow does not invent a secret
+# or other bypass. A final is accepted only as a release.published event whose
+# version is a PEP 440 final.
+#
+# This workflow does not create GitHub releases. Any GitHub release created
+# for an aN or bN tag must be marked prerelease by the Chief who creates it.
+#
+# Python is 3.10, 3.11, and 3.12. 3.13 is not in this matrix. The runner is
+# ubuntu-latest only; Windows and macOS are not claimed. The tiferet pin is
+# exactly 2.2.3, matching pyproject.toml. tables stays at >=3.10.0. h5py is
+# not added.
+#
+# The wheel is built once. Pytest, the YAML gate, artifact checks, and all
+# three smoke rows must pass before the single upload. A skipped
+# existing-version upload is not a new publish and must not overwrite an
+# artifact. Checks stay inline in this file; they are not a repository-root
+# script. The packaging exclude lives in pyproject.toml. This workflow still
+# fails if the built wheel contains a test file or test package.
+
 on:
   push:
     tags:
-      - 'v*a*'     # alpha pre-releases: v0.1.0a1, v0.1.0a2, etc.
+      - 'v*a*'
   release:
-    types: [published]  # beta pre-releases and stable releases
+    types: [published]
+
+# One in-flight run per tag. A later run waits. It must not cancel a publish
+# or overwrite an artifact.
+concurrency:
+  group: pypi-tiferet-h5-${{ github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.gate.outputs.tag }}
+      version: ${{ steps.gate.outputs.version }}
+      kind: ${{ steps.gate.outputs.kind }}
+      upload: ${{ steps.gate.outputs.upload }}
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install version parser
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install packaging
+
+      - name: Classify tag and upload permission
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from packaging.version import InvalidVersion, Version
+
+          event = os.environ["EVENT_NAME"]
+          if event == "release":
+              tag = os.environ.get("RELEASE_TAG", "")
+              prerelease = os.environ.get("RELEASE_PRERELEASE", "").strip().lower()
+          elif event == "push":
+              tag = os.environ.get("REF_NAME", "")
+              prerelease = ""
+          else:
+              raise SystemExit(f"unsupported event {event}")
+
+          if not tag.startswith("v"):
+              raise SystemExit(f"tag {tag!r} must start with v")
+          raw = tag[1:]
+          try:
+              version = Version(raw)
+          except InvalidVersion as exc:
+              raise SystemExit(f"tag version {raw!r} is not PEP 440: {exc}") from exc
+
+          # Reject rc, dev, post, local, epoch, and non-canonical spellings.
+          # aN and bN are the only pre-releases. A final has no pre-release
+          # segment. Finals require Chief authorization; there is no secret.
+          if str(version) != raw or version.epoch or version.local is not None:
+              raise SystemExit(f"tag {tag} is not a canonical aN, bN, or final release")
+          if version.is_devrelease or version.is_postrelease or len(version.release) != 3:
+              raise SystemExit(f"tag {tag} is not a canonical aN, bN, or final release")
+          if version.is_prerelease:
+              letter = version.pre[0]
+              if letter == "a":
+                  kind = "alpha"
+              elif letter == "b":
+                  kind = "beta"
+              else:
+                  raise SystemExit(f"tag {tag} pre-release {letter!r} is not aN or bN")
+          else:
+              kind = "final"
+              print(
+                  "Final release. Finals require Chief authorization. "
+                  "This workflow has no secret bypass."
+              )
+
+          # This workflow does not create GitHub releases. An aN or bN release
+          # that arrives unmarked is refused so it cannot upload.
+          if kind in ("alpha", "beta") and event == "release" and prerelease != "true":
+              raise SystemExit(
+                  "A GitHub release for an aN or bN tag must be marked prerelease. "
+                  "This workflow does not create releases."
+              )
+
+          if event == "push":
+              if kind != "alpha":
+                  raise SystemExit(
+                      "Only an alpha tag push may upload. "
+                      "Beta tag pushes must not upload."
+                  )
+              upload = "true"
+          elif kind == "alpha":
+              upload = "false"
+              print(
+                  "Alpha release-publication event: not uploading. "
+                  "This is not a new publish."
+              )
+          else:
+              upload = "true"
+
+          print(f"tag {tag} version {version} kind {kind} upload {upload}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"tag={tag}\n")
+              handle.write(f"version={version}\n")
+              handle.write(f"kind={kind}\n")
+              handle.write(f"upload={upload}\n")
+          if upload == "false":
+              summary = os.environ.get("GITHUB_STEP_SUMMARY")
+              if summary:
+                  with open(summary, "a", encoding="utf-8") as handle:
+                      handle.write("### Not a new publish\n")
+                      handle.write(
+                          "Alpha release-publication event. "
+                          "Upload skipped. This run did not publish.\n"
+                      )
+          PY
+
   test:
     runs-on: ubuntu-latest
+    needs: classify
+    if: needs.classify.outputs.upload == 'true'
     strategy:
+      fail-fast: true
       matrix:
-        python-version: ["3.10"]
-        # Explicit tiferet-version coverage for the pyproject.toml pin
-        # (currently `tiferet==2.2.3`). Keep this matrix entry identical to
-        # the package build baseline; widen only when pyproject.toml changes
-        # and CI has exercised the new pin.
+        python-version: ["3.10", "3.11", "3.12"]
+        # Exact pin. Keep this identical to pyproject.toml. No range. No 3.13.
         tiferet-version: ["2.2.3"]
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,21 +174,230 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
+        env:
+          TIFERET_VERSION: ${{ matrix.tiferet-version }}
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          pip install .[test]
-          pip install "tiferet==${{ matrix.tiferet-version }}"
+          python -m pip install ".[test]"
+          python -m pip install "tiferet==${TIFERET_VERSION}"
+          command -v tiferet-tester
 
-      - name: Run tests
+      - name: Log Python, tiferet, tables, and HDF5
+        env:
+          TIFERET_VERSION: ${{ matrix.tiferet-version }}
         run: |
-          pytest --verbose
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import platform
+          import tiferet
+          import tables
+
+          expected = os.environ["TIFERET_VERSION"]
+          print(f"Python {platform.python_version()}")
+          print(f"tiferet {tiferet.__version__}")
+          print(f"tables {tables.__version__}")
+          print(f"tables.hdf5_version {tables.hdf5_version}")
+          if expected != "2.2.3" or tiferet.__version__ != expected:
+              raise SystemExit(
+                  f"tiferet {tiferet.__version__} != required exact pin {expected}"
+              )
+
+          def below_floor(version):
+              parts = []
+              for piece in version.split("."):
+                  digits = ""
+                  for char in piece:
+                      if char.isdigit():
+                          digits += char
+                      else:
+                          break
+                  if not digits:
+                      break
+                  parts.append(int(digits))
+              while len(parts) < 3:
+                  parts.append(0)
+              return tuple(parts[:3]) < (3, 10, 0)
+
+          if below_floor(tables.__version__):
+              raise SystemExit(
+                  f"tables {tables.__version__} is below the 3.10.0 floor"
+              )
+          PY
+
+      - name: Run pytest over declared testpaths
+        run: |
+          set -euo pipefail
+          mapfile -t TESTPATHS < <(python - <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path("pyproject.toml").read_text(encoding="utf-8")
+          section = re.search(
+              r"(?ms)^\[tool\.pytest\.ini_options\]\s*(.*?)(?:\n\[|\Z)",
+              text,
+          )
+          if section is None:
+              raise SystemExit("pyproject.toml has no [tool.pytest.ini_options]")
+          match = re.search(
+              r"(?m)^testpaths\s*=\s*\[([^\]]*)\]",
+              section.group(1),
+          )
+          if match is None:
+              raise SystemExit("pyproject.toml does not declare testpaths")
+          paths = re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
+          if not paths:
+              raise SystemExit("declared testpaths is empty")
+          pin = re.search(
+              r"(?ms)^dependencies\s*=\s*\[(.*?)\]",
+              text,
+          )
+          pins = re.findall(
+              r"""['"]tiferet==([^'"]+)['"]""",
+              pin.group(1) if pin else "",
+          )
+          if pins != ["2.2.3"]:
+              raise SystemExit(
+                  f"pyproject tiferet pin must be exactly tiferet==2.2.3, found {pins}"
+              )
+          sys.stdout.write("\n".join(paths) + "\n")
+          PY
+          )
+          printf 'pytest testpaths:'
+          printf ' %q' "${TESTPATHS[@]}"
+          printf '\n'
+          python -m pytest --verbose "${TESTPATHS[@]}"
+
+      - name: Run YAML cases with stub pairing and status parsing
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          # Observed from tiferet==2.2.3 `tiferet-tester module run` (not --summary):
+          #   tiferet_tests/utils/test_h5_client_raises_probe.yml::test_h5_client_raises::operation_before_open_raises PASSED
+          #   1 passed
+          # A wrong expected error code exits 1 and prints:
+          #   <node> FAILED
+          #   {"error_code": "PHASE_CHECK_FAILED", ...}
+          #   1 failed
+          # plus a stderr tester ERROR record.
+          # A top-level side_effect exits 1 with no count line:
+          #   Module run failed to load ...: ValueError: Illegal test-module root: side_effect
+          # The installed count line is also `N failed, M passed` when both are nonzero.
+          # Do not fail a PASSED case because its text contains the substring error_code.
+
+          CASE_LINE = re.compile(r"^(?P<node>\S+) (?P<status>PASSED|FAILED)$")
+          SUMMARY_LINE = re.compile(
+              r"^(?:(?P<failed>\d+) failed(?:, (?P<passed>\d+) passed)?|(?P<only_passed>\d+) passed)$"
+          )
+          PHASE_CODES = (
+              "INVALID_MODEL_ATTRIBUTE",
+              "PHASE_CHECK_FAILED",
+              "PHASE_STEP_FAILED",
+              "PHASE_FIXTURE_NOT_FOUND",
+              "PHASE_NAME_COLLISION",
+              "PHASE_REFERENCE_NOT_FOUND",
+              "PHASE_HANDLER_MISMATCH",
+          )
+
+          def fail(message):
+              raise SystemExit(message)
+
+          def parse_tester_output(stdout, stderr, exit_code, label):
+              combined = f"{stdout}\n{stderr}"
+              if exit_code != 0:
+                  fail(f"{label}: tiferet-tester exited {exit_code}")
+              if "Module run failed to load" in combined or " - tester - ERROR - " in combined:
+                  fail(f"{label}: tester reported a load or case error")
+              for code in PHASE_CODES:
+                  if code in combined:
+                      fail(f"{label}: unexpected tester-phase failure {code}")
+              summaries = []
+              passed_lines = 0
+              failed_lines = 0
+              for line in combined.splitlines():
+                  case = CASE_LINE.match(line)
+                  if case:
+                      if case.group("status") == "FAILED":
+                          failed_lines += 1
+                      else:
+                          passed_lines += 1
+                      continue
+                  summary = SUMMARY_LINE.match(line)
+                  if summary:
+                      summaries.append(summary)
+              if len(summaries) != 1:
+                  fail(f"{label}: missing or unparseable completion summary")
+              summary = summaries[0]
+              if summary.group("only_passed") is not None:
+                  failed = 0
+                  passed = int(summary.group("only_passed"))
+              else:
+                  failed = int(summary.group("failed"))
+                  passed = int(summary.group("passed") or 0)
+              if failed != 0 or failed_lines != 0:
+                  fail(f"{label}: nonzero failed count {failed}")
+              if passed == 0 or passed_lines == 0 or passed != passed_lines:
+                  fail(
+                      f"{label}: unparseable completion summary "
+                      f"({passed} passed, {passed_lines} PASSED lines)"
+                  )
+              return passed
+
+          root = Path(".").resolve()
+          yaml_files = sorted(root.glob("tiferet_tests/**/*.yml"))
+          if not yaml_files:
+              fail("no YAML files under tiferet_tests/")
+          stubs = []
+          for path in yaml_files:
+              relative = path.relative_to(root)
+              if not (path.name.startswith("test_") and path.suffix == ".yml"):
+                  fail(f"YAML case is not named test_*.yml: {relative}")
+              stub = root / "tests" / path.relative_to(root / "tiferet_tests").with_suffix(".py")
+              if not stub.is_file():
+                  fail(f"missing stub for {relative}: {stub.relative_to(root)}")
+              stubs.append(stub)
+          passed = 0
+          for stub in stubs:
+              label = stub.relative_to(root).as_posix()
+              result = subprocess.run(
+                  [
+                      "tiferet-tester",
+                      "module",
+                      "run",
+                      label,
+                      "--base-dir",
+                      str(root),
+                  ],
+                  cwd=root,
+                  text=True,
+                  capture_output=True,
+                  check=False,
+              )
+              sys.stdout.write(result.stdout)
+              sys.stderr.write(result.stderr)
+              passed += parse_tester_output(
+                  result.stdout,
+                  result.stderr,
+                  result.returncode,
+                  label,
+              )
+          print(f"YAML gate passed {passed} cases across {len(stubs)} modules")
+          PY
 
   build:
     runs-on: ubuntu-latest
-    needs: test
-    env:
-      TIFERET_H5_SILENT_IMPORTS: "1"
-
+    needs: [classify, test]
+    if: needs.classify.outputs.upload == 'true' && needs.test.result == 'success'
+    outputs:
+      wheel_name: ${{ steps.record.outputs.wheel_name }}
+      wheel_sha256: ${{ steps.record.outputs.wheel_sha256 }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -51,56 +405,389 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Install build tools
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          pip install build twine setuptools>=42 wheel
+          python -m pip install build twine "setuptools>=42" wheel
 
-      - name: Extract version from tiferet_h5/__init__.py
-        id: get_version
+      - name: Validate tag matches package version
+        env:
+          TAG: ${{ needs.classify.outputs.tag }}
         run: |
-          VERSION=$(python -c "from tiferet_h5 import __version__; print(__version__)")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Validate version matches tag
-        run: |
-          TAG=${{ github.ref_name }}
-          PACKAGE_VERSION=${{ steps.get_version.outputs.version }}
-          if [ "$TAG" != "v$PACKAGE_VERSION" ]; then
-            echo "Error: Tag ($TAG) does not match package version (v$PACKAGE_VERSION)"
+          set -euo pipefail
+          VERSION=$(TIFERET_H5_SILENT_IMPORTS=1 python -c "from tiferet_h5 import __version__; print(__version__)")
+          PYPROJECT_VERSION=$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("pyproject.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version\s*=\s*["\']([^"\']+)["\']', text)
+          if match is None:
+              raise SystemExit("pyproject.toml has no version")
+          print(match.group(1))
+          PY
+          )
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "Tag ($TAG) does not match package version (v$VERSION)"
+            exit 1
+          fi
+          if [ "$VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "tiferet_h5.__version__ ($VERSION) does not match pyproject ($PYPROJECT_VERSION)"
             exit 1
           fi
 
-      - name: Build package
+      - name: Build package once
         run: |
+          set -euo pipefail
           python -m build
 
       - name: Check package
         run: |
+          set -euo pipefail
           twine check dist/*
 
-      - name: Upload artifacts
+      - name: Record the built wheel
+        id: record
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          sdists = sorted(Path("dist").glob("*.tar.gz"))
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(f"expected one wheel and one sdist, found {wheels} {sdists}")
+          wheel = wheels[0]
+          if not wheel.name.endswith("-py3-none-any.whl"):
+              raise SystemExit(f"wheel {wheel.name} is not py3-none-any; refusing a per-interpreter rebuild")
+          digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          print(f"wheel {wheel.name} sha256 {digest}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"wheel_name={wheel.name}\n")
+              handle.write(f"wheel_sha256={digest}\n")
+          PY
+
+      - name: Upload the built artifact
         uses: actions/upload-artifact@v4
         with:
           name: package-dist
           path: dist/
+          if-no-files-found: error
 
-  publish:
+  artifact:
     runs-on: ubuntu-latest
-    needs: build
-    environment: pypi
-
-    permissions:
-      id-token: write  # Required for OIDC authentication with PyPI
-
+    needs: [classify, build]
+    if: needs.classify.outputs.upload == 'true' && needs.build.result == 'success'
     steps:
-      - name: Download artifacts
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download the built artifact
         uses: actions/download-artifact@v4
         with:
           name: package-dist
           path: dist/
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Reject test files and a description that disagrees with pyproject
+        env:
+          WHEEL_NAME: ${{ needs.build.outputs.wheel_name }}
+          WHEEL_SHA256: ${{ needs.build.outputs.wheel_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import os
+          import re
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          expected_pin = "tiferet==2.2.3"
+          wheel_name = os.environ["WHEEL_NAME"]
+          expected_sha = os.environ["WHEEL_SHA256"]
+          wheel = Path("dist") / wheel_name
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if not wheel.is_file() or wheels != [wheel]:
+              raise SystemExit(f"expected the built wheel {wheel_name}, found {wheels}")
+          digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          if digest != expected_sha:
+              raise SystemExit(f"downloaded wheel sha256 {digest} != built artifact {expected_sha}")
+          if not wheel.name.endswith("-py3-none-any.whl"):
+              raise SystemExit(f"wheel {wheel.name} is not the universal artifact")
+
+          text = Path("pyproject.toml").read_text(encoding="utf-8")
+          version_match = re.search(r'(?m)^version\s*=\s*["\']([^"\']+)["\']', text)
+          deps_match = re.search(r"(?ms)^dependencies\s*=\s*\[(.*?)\]", text)
+          if version_match is None or deps_match is None:
+              raise SystemExit("pyproject.toml is missing version or dependencies")
+          version = version_match.group(1)
+          dependency_text = deps_match.group(1)
+          pins = re.findall(r"""['"]tiferet==([^'"]+)['"]""", dependency_text)
+          tables = re.findall(r"""['"](tables[^'"]*)['"]""", dependency_text)
+          quoted = re.findall(r"""['"]([^'"]+)['"]""", dependency_text)
+          if pins != ["2.2.3"] or expected_pin != f"tiferet=={pins[0]}":
+              raise SystemExit(f"pyproject tiferet pin must be exactly {expected_pin}, found {pins}")
+          if "tables>=3.10.0" not in tables:
+              raise SystemExit(f"tables floor must stay tables>=3.10.0, found {tables}")
+          if any(item.split(";", 1)[0].strip().lower().startswith("h5py") for item in quoted):
+              raise SystemExit("h5py must not be a dependency")
+
+          def is_test_member(name):
+              parts = PurePosixPath(name).parts
+              filename = parts[-1] if parts else name
+              if any(part in {"tests", "tests_int"} for part in parts):
+                  return True
+              if filename in {"conftest.py", "tests.py", "tests_int.py"}:
+                  return True
+              if filename.startswith("test_") and filename.endswith((".py", ".pyc", ".pyo")):
+                  return True
+              if filename.endswith("_test.py"):
+                  return True
+              return False
+
+          with zipfile.ZipFile(wheel) as archive:
+              names = archive.namelist()
+              metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
+              if len(metadata_names) != 1:
+                  raise SystemExit(f"expected one METADATA, found {metadata_names}")
+              metadata = archive.read(metadata_names[0]).decode("utf-8")
+          bad = [name for name in names if is_test_member(name)]
+          if bad:
+              raise SystemExit("wheel contains test files or test packages:\n" + "\n".join(bad))
+
+          normalized = metadata.replace("\r\n", "\n")
+          header, separator, body = normalized.partition("\n\n")
+          if not separator or not body.strip():
+              raise SystemExit("wheel METADATA has no description body")
+          header_versions = re.findall(r"(?m)^Version:\s*(\S+)\s*$", header)
+          requires = re.findall(r"(?m)^Requires-Dist:\s*(.+?)\s*$", header)
+          tiferet_reqs = [item for item in requires if item.lower().startswith("tiferet")]
+          tables_reqs = [item for item in requires if item.lower().startswith("tables")]
+          if header_versions != [version]:
+              raise SystemExit(f"wheel Version {header_versions} != pyproject {version}")
+          if tiferet_reqs != [expected_pin]:
+              raise SystemExit(f"wheel tiferet Requires-Dist {tiferet_reqs} != {expected_pin}")
+          if tables_reqs != ["tables>=3.10.0"]:
+              raise SystemExit(f"wheel tables Requires-Dist {tables_reqs} != tables>=3.10.0")
+          if any(item.lower().startswith("h5py") for item in requires):
+              raise SystemExit("wheel requires h5py")
+
+          specifiers = re.findall(
+              r"tiferet\s*(==|>=|<=|~=|!=|>|<)\s*([0-9][^`\s,;)]*)",
+              body,
+              flags=re.IGNORECASE,
+          )
+          normalized_pins = [f"tiferet{op}{spec}" for op, spec in specifiers]
+          if normalized_pins != [expected_pin]:
+              raise SystemExit(
+                  f"description tiferet pin {normalized_pins} does not match {expected_pin}"
+              )
+          stated = re.findall(r"`tiferet-h5` is at `([^`]+)`", body)
+          if stated != [version]:
+              raise SystemExit(
+                  f"description version {stated} does not match pyproject {version}"
+              )
+          print(f"artifact ok {wheel_name} version {version} pin {expected_pin}")
+          PY
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: [classify, build]
+    if: needs.classify.outputs.upload == 'true' && needs.build.result == 'success'
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Download the built artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: package-dist
+          path: dist/
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Smoke the exact wheel in a clean venv
+        env:
+          WHEEL_NAME: ${{ needs.build.outputs.wheel_name }}
+          WHEEL_SHA256: ${{ needs.build.outputs.wheel_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          name = os.environ["WHEEL_NAME"]
+          expected = os.environ["WHEEL_SHA256"]
+          path = Path("dist") / name
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if not path.is_file() or wheels != [path]:
+              raise SystemExit(f"expected one wheel {name}, found {wheels}")
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          if digest != expected:
+              raise SystemExit(f"wheel sha256 {digest} != built artifact {expected}")
+          print(f"smoking {name} sha256 {digest}")
+          PY
+          python -m venv "$RUNNER_TEMP/smoke-venv"
+          "$RUNNER_TEMP/smoke-venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/smoke-venv/bin/python" -m pip install "dist/${WHEEL_NAME}"
+          if "$RUNNER_TEMP/smoke-venv/bin/python" -c "import pytest" 2>/dev/null; then
+            echo "smoke venv has pytest; the wheel install must not include the test extra"
+            exit 1
+          fi
+          env -u TIFERET_H5_SILENT_IMPORTS "$RUNNER_TEMP/smoke-venv/bin/python" - <<'PY'
+          import os
+          import platform
+          import tempfile
+          from pathlib import Path
+
+          if "TIFERET_H5_SILENT_IMPORTS" in os.environ:
+              raise SystemExit("TIFERET_H5_SILENT_IMPORTS must be unset for the wheel smoke")
+
+          import tables
+          import tiferet
+          from tiferet_h5 import H5Client
+
+          print(f"Python {platform.python_version()}")
+          print(f"tiferet {tiferet.__version__}")
+          print(f"tables {tables.__version__}")
+          print(f"tables.hdf5_version {tables.hdf5_version}")
+          if tiferet.__version__ != "2.2.3":
+              raise SystemExit(f"wheel resolved tiferet {tiferet.__version__}, expected 2.2.3")
+
+          def below_floor(version):
+              parts = []
+              for piece in version.split("."):
+                  digits = ""
+                  for char in piece:
+                      if char.isdigit():
+                          digits += char
+                      else:
+                          break
+                  if not digits:
+                      break
+                  parts.append(int(digits))
+              while len(parts) < 3:
+                  parts.append(0)
+              return tuple(parts[:3]) < (3, 10, 0)
+
+          if below_floor(tables.__version__):
+              raise SystemExit(f"tables {tables.__version__} is below the 3.10.0 floor")
+
+          # open_file uses the constructor mode; H5Client has no mode argument.
+          tmpdir = Path(tempfile.mkdtemp(prefix="tiferet-h5-smoke-"))
+          path = tmpdir / "smoke.h5"
+          client = H5Client(path, mode="w")
+          client.open_file()
+          client.create_group("/smoke")
+          client.flush()
+          client.close_file()
+          if client.h5file is not None:
+              raise SystemExit("h5file is not None after close")
+          if not path.is_file():
+              raise SystemExit("temp .h5 does not exist after close")
+          print(f"smoke ok {path}")
+          PY
+
+  guard:
+    runs-on: ubuntu-latest
+    needs: [classify, artifact, smoke]
+    if: needs.classify.outputs.upload == 'true' && needs.artifact.result == 'success' && needs.smoke.result == 'success'
+    outputs:
+      should_upload: ${{ steps.pypi.outputs.should_upload }}
+    steps:
+      - name: Refuse an existing PyPI version
+        id: pypi
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --output /tmp/pypi-version.json --write-out "%{http_code}" \
+            "https://pypi.org/pypi/tiferet-h5/${VERSION}/json")
+          if [ "$code" = "200" ]; then
+            python - <<'PY'
+          import json
+          import os
+          payload = json.load(open("/tmp/pypi-version.json", encoding="utf-8"))
+          info_version = payload.get("info", {}).get("version")
+          expected = os.environ["VERSION"]
+          if info_version != expected:
+              raise SystemExit(
+                  f"PyPI JSON version {info_version!r} != {expected!r}; refusing to upload"
+              )
+          print(
+              f"PyPI already has tiferet-h5=={expected}. "
+              "Skipping upload. This is not a new publish."
+          )
+          PY
+            echo "should_upload=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Not a new publish"
+              echo "PyPI already has tiferet-h5==${VERSION}. Upload skipped. This run did not publish a new artifact."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::PyPI already has tiferet-h5==${VERSION}. Upload skipped. This is not a new publish."
+          elif [ "$code" = "404" ]; then
+            echo "PyPI does not have tiferet-h5==${VERSION}. One upload is allowed."
+            echo "should_upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Could not confirm whether tiferet-h5==${VERSION} exists on PyPI (HTTP ${code}). Refusing to upload."
+            exit 1
+          fi
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [build, guard]
+    if: needs.guard.outputs.should_upload == 'true'
+    environment: pypi
+    permissions:
+      id-token: write  # Required for OIDC authentication with PyPI
+    steps:
+      - name: Download the built artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: package-dist
+          path: dist/
+
+      - name: Verify the upload is the smoked wheel
+        env:
+          WHEEL_NAME: ${{ needs.build.outputs.wheel_name }}
+          WHEEL_SHA256: ${{ needs.build.outputs.wheel_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          name = os.environ["WHEEL_NAME"]
+          expected = os.environ["WHEEL_SHA256"]
+          path = Path("dist") / name
+          wheels = sorted(Path("dist").glob("*.whl"))
+          sdists = sorted(Path("dist").glob("*.tar.gz"))
+          if not path.is_file() or wheels != [path] or len(sdists) != 1:
+              raise SystemExit(f"refusing to upload unexpected dist contents: {wheels} {sdists}")
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          if digest != expected:
+              raise SystemExit(f"upload wheel sha256 {digest} != built artifact {expected}")
+          print(f"uploading {name} sha256 {digest} and {sdists[0].name}")
+          PY
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: false
+          print-hash: true
+          attestations: true
