@@ -8,7 +8,7 @@
 - **Branch:** `v1.x-proto`
 - **Python:** ≥ 3.10
 - **Version:** `1.0.1a1`. The `1.0.0a8` cluster (RFP-001 through RFP-007) remains frozen as history. See `CHANGELOG.md`.
-- **Dependencies:** `tiferet==2.2.2b1`, `tables >= 3.10.0`
+- **Dependencies:** `tiferet==2.2.3`, `tables >= 3.10.0`
 
 ## Architecture
 
