@@ -49,6 +49,41 @@ def meta_repo(catalog_path: str) -> CatalogMetaRepository:
     '''
     return CatalogMetaRepository(catalog_path)
 
+# ** fixture: config_driven_catalog_path
+@pytest.fixture
+def config_driven_catalog_path(monkeypatch: pytest.MonkeyPatch) -> Path:
+    '''
+    Chdir into examples/catalog_app and return the fixed catalog.h5 path
+    config.yml's h5_file params resolve to, removing it before and after
+    each test so config-driven runs never leak state between tests or into
+    a manual `python catalog_client.py` run.
+
+    App('catalog_client') resolves config.yml against the process cwd.
+    The chdir is scoped with monkeypatch so the two config-driven tests
+    pass from the repository root. Cleanup runs before monkeypatch
+    restores the original cwd.
+
+    :param monkeypatch: The pytest monkeypatch fixture.
+    :type monkeypatch: pytest.MonkeyPatch
+    :return: The catalog.h5 path relative to examples/catalog_app.
+    :rtype: Path
+    '''
+
+    # Resolve the example app from this file so the chdir does not depend on cwd.
+    catalog_app = Path(__file__).resolve().parent.parent
+    monkeypatch.chdir(catalog_app)
+
+    # Remove a leftover catalog.h5 before the test.
+    path = Path('catalog.h5')
+    if path.exists():
+        path.unlink()
+
+    yield path
+
+    # Remove the file the test wrote, still inside the chdir scope.
+    if path.exists():
+        path.unlink()
+
 # *** tests
 
 # ** test: two_repository_composition_persists_meta_and_items
@@ -190,23 +225,6 @@ def test_apply_item_discount_rejects_out_of_range_percent(items_repo: CatalogIte
         )
 
     assert exc_info.value.error_code == 'INVALID_DISCOUNT_PERCENT'
-
-# ** fixture: config_driven_catalog_path
-@pytest.fixture
-def config_driven_catalog_path() -> Path:
-    '''
-    Return the fixed catalog.h5 path config.yml's h5_file params resolve to
-    (relative to the process cwd, which must be examples/catalog_app for
-    these tests -- see the package README), removing it before and after
-    each test so config-driven runs never leak state between tests or into
-    a manual `python catalog_client.py` run.
-    '''
-    path = Path('catalog.h5')
-    if path.exists():
-        path.unlink()
-    yield path
-    if path.exists():
-        path.unlink()
 
 # ** test: config_driven_app_runs_add_item_and_list_items_features
 def test_config_driven_app_runs_add_item_and_list_items_features(config_driven_catalog_path: Path) -> None:
